@@ -7,4 +7,4 @@ source "https://rubygems.org"
 # key_filepath workaround in asc_api_key, so 2.233+ is OK functionally,
 # but pinning gives CI a stable upper bound until we explicitly bump.
 # See docs/CONTINUOUS-VALIDATION.md → G11.
-gem "fastlane", "~> 2.233"
+gem "fastlane", "~> 2.234"
