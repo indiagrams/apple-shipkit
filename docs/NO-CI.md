@@ -154,7 +154,7 @@ the smoketest as one of its three sequential canary cells. Forks
 that want their own local-mode canary either:
 
 - **Manual / ad-hoc**: `gh workflow run canary-local-mode.yml --repo <your-fork>` whenever you want a one-shot validation. No additional setup beyond the standard 5 GH Secrets enumerated below.
-- **Scheduled**: fork apple-shipkit, point `canary-trigger.yml`'s `TARGET_REPO` at your fork, configure `SMOKETEST_DISPATCH_PAT` (a fine-grained PAT on your fork with `Actions: Read and write`), and let the apple-shipkit-fork's Saturday cron dispatch into your fork's `canary-local-mode.yml`.
+- **Scheduled**: fork apple-shipkit, point `canary-trigger.yml`'s `TARGET_REPO` at your fork, configure `SMOKETEST_DISPATCH_PAT` (a fine-grained PAT on your fork with `Actions: Read and write`), and let the apple-shipkit-fork's Saturday cron dispatch into your fork's `canary-local-mode.yml`. **Pick 1-year expiration when minting the PAT** (GitHub's max for fine-grained tokens); the default 30 days will fail the cron on the first Saturday after the 30-day mark with `HTTP 401: Bad credentials`. `canary-trigger.yml`'s preflight surfaces the rotation runbook in the failed run's logs.
 
 When the canary runs, it mints 3 throwaway signing certs into a controlled
 keychain on the GH runner, runs full `fastlane release` (sigh-based App

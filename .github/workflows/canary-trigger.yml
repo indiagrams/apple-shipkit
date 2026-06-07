@@ -93,6 +93,31 @@ jobs:
           fi
           echo "PAT present (${#GH_TOKEN} chars)"
 
+      - name: Verify dispatch PAT is valid (not expired)
+        run: |
+          # Probe /user with the PAT to verify it isn't expired or revoked.
+          # Fine-grained PATs default to 30-day expiry — without a longer
+          # expiration picked at mint time, this workflow goes red on the
+          # first Saturday cron after the 30-day mark, with HTTP 401 buried
+          # in the Dispatch step's logs (the "set" guard above passes
+          # because the secret IS still configured; the value is just dead).
+          # Surface that here with an actionable rotation runbook instead.
+          if ! pat_user=$(gh api /user --jq .login 2>&1); then
+            echo "::error::SMOKETEST_DISPATCH_PAT is configured but the GitHub API rejected it."
+            echo "Most common cause: PAT expired (fine-grained tokens default to 30 days)."
+            echo "API response: $pat_user"
+            echo
+            echo "Rotation runbook:"
+            echo "  1. https://github.com/settings/personal-access-tokens → Generate new token (fine-grained)"
+            echo "  2. Resource owner: same account that owned the prior token"
+            echo "  3. Repository access: ${TARGET_REPO}"
+            echo "  4. Permissions → Repository → Actions: Read and write"
+            echo "  5. Expiration: 1 year (GitHub's max for fine-grained)"
+            echo "  6. gh secret set SMOKETEST_DISPATCH_PAT --repo ${{ github.repository }}"
+            exit 1
+          fi
+          echo "PAT valid (authenticated as: $pat_user)"
+
       - name: Capture dispatch baseline timestamp
         id: baseline
         run: |
