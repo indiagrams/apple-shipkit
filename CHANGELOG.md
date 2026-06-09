@@ -9,9 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `.github/workflows/canary-trigger.yml` — new "Verify dispatch PAT is valid (not expired)" preflight step probes `gh api /user` with the `SMOKETEST_DISPATCH_PAT` secret before the dispatch API call. On 401 (expired/revoked), emits an actionable rotation runbook directly in the failed run's log (link to GitHub's fine-grained PAT page, required scopes, target repo from `${TARGET_REPO}`, `gh secret set` one-liner) instead of leaving `HTTP 401: Bad credentials` buried in the Dispatch step's output after a misleading-passing "PAT is set" guard. Surfaced 2026-06-06 when the smoketest canary went red across all three matrix cells (CI-mode xcodegen + tuist + Local-mode) on identical 401s: the upstream `SMOKETEST_DISPATCH_PAT` had hit its 30-day fine-grained-PAT default expiry, exactly 31 days after the 2026-05-06 mint and 7 days after the last green Saturday cron (2026-05-30). Existing "PAT present (${#GH_TOKEN} chars)" check verifies the secret is configured, not that the value is still valid; preflight closes that gap. Also documented at PAT-setup time: `docs/CONTINUOUS-VALIDATION.md` and `docs/NO-CI.md` now flag the 30-day default expiry inline at their respective `SMOKETEST_DISPATCH_PAT` setup bullets, recommending the 1-year fine-grained max as the right pick to avoid 30-day rotation chore.
-
 ### Changed
+
+### Fixed
+
+## [1.8.0] - 2026-06-09
+
+Maintenance minor. Two changes hardening the production validation loop against time-based and runner-image drift, plus routine dependency bumps (#243, #244, #245, #247, #249). **(1) Canary dispatch PAT-expiry preflight** (#248): `canary-trigger.yml` probes `gh api /user` with `SMOKETEST_DISPATCH_PAT` before the dispatch API call; on 401 it prints an actionable rotation runbook in the failed run's log instead of leaving `Bad credentials` buried after a misleading-passing "PAT is set" guard. Surfaced 2026-06-06 when the 30-day fine-grained PAT hit default expiry and all three smoketest canary matrix cells went red on identical 401s. **(2) macOS UI screenshot test headless-CI skip** (#246): `XCTSkip` gated on `NSHomeDirectory() == "/Users/runner"` — macos-15-arm64 image `20260520.0085` (macOS 15.7.7) tightened headless-session activation so `app.activate()` can never foreground the window; the home-directory check survives launchd's env-scrub where `CI`/`GITHUB_ACTIONS` env checks silently don't. Unblocked dependabot #245.
+
+### Added
+
+- `.github/workflows/canary-trigger.yml` — new "Verify dispatch PAT is valid (not expired)" preflight step probes `gh api /user` with the `SMOKETEST_DISPATCH_PAT` secret before the dispatch API call. On 401 (expired/revoked), emits an actionable rotation runbook directly in the failed run's log (link to GitHub's fine-grained PAT page, required scopes, target repo from `${TARGET_REPO}`, `gh secret set` one-liner) instead of leaving `HTTP 401: Bad credentials` buried in the Dispatch step's output after a misleading-passing "PAT is set" guard. Surfaced 2026-06-06 when the smoketest canary went red across all three matrix cells (CI-mode xcodegen + tuist + Local-mode) on identical 401s: the upstream `SMOKETEST_DISPATCH_PAT` had hit its 30-day fine-grained-PAT default expiry, exactly 31 days after the 2026-05-06 mint and 7 days after the last green Saturday cron (2026-05-30). Existing "PAT present (${#GH_TOKEN} chars)" check verifies the secret is configured, not that the value is still valid; preflight closes that gap. Also documented at PAT-setup time: `docs/CONTINUOUS-VALIDATION.md` and `docs/NO-CI.md` now flag the 30-day default expiry inline at their respective `SMOKETEST_DISPATCH_PAT` setup bullets, recommending the 1-year fine-grained max as the right pick to avoid 30-day rotation chore.
 
 ### Fixed
 
