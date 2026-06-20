@@ -167,6 +167,13 @@ jobs:
         run: |
           brew install xcbeautify
           if [ "${{ matrix.generator }}" = "tuist" ]; then
+            # Refresh the cask DB first. The runner image bakes in a Homebrew
+            # snapshot that can lag the cask, and tuist < 4.199.0 ships a broken
+            # dyld linkage (aborts loading @rpath/libswiftCompatibilitySpan.dylib;
+            # fixed upstream in 4.199.0 via tuist#11229). With HOMEBREW_NO_AUTO_UPDATE=1
+            # (job env) a plain install pins CI to the stale cached version (4.198.1
+            # on the 20260610 image), so refresh explicitly to pull >= 4.199.0.
+            brew update
             brew install --cask tuist
           else
             brew install xcodegen
