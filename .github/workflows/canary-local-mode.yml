@@ -247,6 +247,12 @@ jobs:
               if [ -f app/project.yml ]; then
                 # Symmetric: tuist preflight needs tuist on PATH. brew is idempotent.
                 echo "Installing tuist (required by switch-to-tuist.sh preflight)"
+                # `brew update` first: GH runner images bake in a stale Homebrew
+                # snapshot, and a plain cask install pulls the cached tuist
+                # (4.198.1 on the 20260610 image) which aborts at `tuist generate`
+                # with a missing @rpath/libswiftCompatibilitySpan.dylib (fixed
+                # upstream in tuist 4.199.0 / tuist#11229). Refresh to pull >= 4.199.0.
+                brew update
                 brew install --cask tuist
                 echo "Switching workspace to tuist via bin/switch-to-tuist.sh"
                 ./bin/switch-to-tuist.sh

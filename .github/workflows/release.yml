@@ -249,6 +249,11 @@ jobs:
               if [ -f app/Project.swift ] && grep -q 'cd app && tuist' Makefile; then
                 echo "Already in tuist state — no switch needed"
               elif [ -x ./bin/switch-to-tuist.sh ]; then
+                # brew update first — runner images cache a stale tuist (4.198.1)
+                # that aborts at `tuist generate` on a missing
+                # @rpath/libswiftCompatibilitySpan.dylib (fixed in tuist 4.199.0 /
+                # tuist#11229); refresh to pull >= 4.199.0.
+                brew update
                 brew install --cask tuist || true
                 ./bin/switch-to-tuist.sh --force
               else
