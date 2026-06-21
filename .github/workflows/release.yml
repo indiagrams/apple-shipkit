@@ -187,7 +187,15 @@ jobs:
       - name: Bootstrap toolchain (xcodegen via Homebrew)
         # `make bootstrap` does brew bundle (xcodegen, tuist, lefthook) +
         # bundle install. Idempotent.
-        run: make bootstrap
+        run: |
+          # brew update first: make bootstrap's `brew bundle` installs the
+          # Brewfile's `cask "tuist"`. A stale runner cask cache yields tuist
+          # 4.198.1, which aborts at `tuist generate` on a missing
+          # @rpath/libswiftCompatibilitySpan.dylib (fixed in 4.199.0 / tuist#11229).
+          # make bootstrap installs tuist BEFORE the override step below, and
+          # `brew install` won't upgrade an already-installed cask, so refresh here.
+          brew update
+          make bootstrap
 
       - name: Pin brew Ruby on PATH for subsequent steps
         # `make bootstrap` (above) ran `bundle install` via brew Ruby
@@ -249,11 +257,8 @@ jobs:
               if [ -f app/Project.swift ] && grep -q 'cd app && tuist' Makefile; then
                 echo "Already in tuist state — no switch needed"
               elif [ -x ./bin/switch-to-tuist.sh ]; then
-                # brew update first — runner images cache a stale tuist (4.198.1)
-                # that aborts at `tuist generate` on a missing
-                # @rpath/libswiftCompatibilitySpan.dylib (fixed in tuist 4.199.0 /
-                # tuist#11229); refresh to pull >= 4.199.0.
-                brew update
+                # tuist is already refreshed before `make bootstrap` (see above);
+                # this install is just a no-op safety net for the switch preflight.
                 brew install --cask tuist || true
                 ./bin/switch-to-tuist.sh --force
               else
