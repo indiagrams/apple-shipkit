@@ -160,7 +160,7 @@ jobs:
       ORPHAN_IDS_FILE:               ${{ github.workspace }}/.canary-orphan-ids.txt
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -302,7 +302,7 @@ jobs:
         # run's saved state). Cache eviction is 7-day idle; weekly cron
         # refreshes TTL on every restore, so persistence is indefinite as
         # long as runs keep happening at least weekly.
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: cache-restore
         with:
           path: ${{ env.ORPHAN_IDS_FILE }}
@@ -418,7 +418,7 @@ jobs:
         # always() doesn't run (rare runner-death scenario), the cache still
         # persists the orphan ids so next run's pre-step revokes them.
         if: always() && hashFiles(env.ORPHAN_IDS_FILE) != ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ORPHAN_IDS_FILE }}
           key: canary-orphan-ids-v1-${{ github.run_id }}-${{ matrix.generator }}-mid
@@ -601,7 +601,7 @@ jobs:
         # Saves the (now-empty, post-revoke) tracking file. Next run's
         # pre-step restores this and treats it as "no orphans, no-op".
         if: always() && hashFiles(env.ORPHAN_IDS_FILE) != ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ORPHAN_IDS_FILE }}
           key: canary-orphan-ids-v1-${{ github.run_id }}-${{ matrix.generator }}-final
