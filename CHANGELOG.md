@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `.github/workflows/dependabot-automerge.yml` — opt-in workflow that enables GitHub-native auto-merge on Dependabot PRs, so routine weekly dependency bumps land themselves once pr.yml's 8 required checks pass instead of the maintainer merging each by hand. Reads Dependabot metadata via `dependabot/fetch-metadata` and, when allowed, runs `gh pr merge --auto --squash`; a red check blocks the merge (the PR waits for a human), and no approval step is involved (main requires 0 reviews). Fork-safe and inert until opted in via the `DEPENDABOT_AUTOMERGE` repo variable: `true` auto-merges semver patch + minor and leaves majors for manual review (posts a one-time "held for review" comment); `all` also auto-merges majors; unset = disabled. Bundler majors stay out of scope regardless — the Gemfile's `fastlane ~> 2.224` pin keeps Dependabot from proposing an out-of-range major gem. Uses `pull_request` (never `pull_request_target`) and only calls the GitHub API — it never checks out or runs PR content — so the `contents: write` + `pull-requests: write` grants can't be abused by a malicious payload.
+
 ### Changed
 
 ### Fixed

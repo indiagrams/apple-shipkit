@@ -1,0 +1,87 @@
+name: dependabot-automerge
+
+# Enables GitHub's native auto-merge on Dependabot PRs so routine dependency
+# bumps land themselves once the required checks (pr.yml's 8 contexts) pass,
+# instead of the maintainer merging each one by hand every week.
+#
+# HOW IT WORKS
+#   On every Dependabot PR this workflow reads the update metadata and, when
+#   the update tier is allowed, calls `gh pr merge --auto --squash`. That flips
+#   on branch-native auto-merge: GitHub holds the PR until all required status
+#   checks are green (branch protection: 8 contexts, 0 reviews, non-strict),
+#   then squash-merges and deletes the branch. If a check goes red, nothing
+#   merges — the PR just sits until a human intervenes. No approval step is
+#   involved (main requires 0 reviews; GITHUB_TOKEN cannot self-approve anyway).
+#
+# OPT-IN (fork-safe)
+#   Inert unless the `DEPENDABOT_AUTOMERGE` repo variable is set. Forks inherit
+#   this file but nothing auto-merges until they opt in:
+#     gh variable set DEPENDABOT_AUTOMERGE --body true   # patch + minor (recommended)
+#     gh variable set DEPENDABOT_AUTOMERGE --body all    # patch + minor + major
+#   Unset / any other value = disabled.
+#
+# TIERS
+#   'true' auto-merges semver-patch and semver-minor only; semver-major bumps
+#   are left for a human (a major — e.g. actions/checkout v6 -> v7 — can carry
+#   behavioral change the PR matrix doesn't fully exercise, e.g. fastlane's
+#   ship/upload path). Set 'all' to also auto-merge majors. Bundler majors are
+#   already unreachable here: the Gemfile pins fastlane `~> 2.224`, so
+#   Dependabot never proposes an out-of-range major gem.
+#
+# SECURITY
+#   Uses `pull_request` (not `pull_request_target`) and never checks out or
+#   executes PR content — it only calls the GitHub API — so the elevated
+#   token grants can't be abused by a malicious PR payload.
+
+on:
+  pull_request:
+    branches: [main, master]
+
+# Least-privilege, but enough to enable auto-merge on the PR. The repo's
+# default workflow token is read-only; these declarations override that for
+# this workflow only. Honored for Dependabot-triggered runs.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    # Only Dependabot's own PRs, and only when the opt-in variable is set.
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      (vars.DEPENDABOT_AUTOMERGE == 'true' || vars.DEPENDABOT_AUTOMERGE == 'all')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge (squash)
+        # Merge tier gate: always allow patch/minor; allow major only in 'all'
+        # mode. `gh pr merge --auto` is idempotent — re-running on a PR that
+        # already has auto-merge enabled is a no-op, not an error.
+        if: >-
+          steps.meta.outputs.update-type != 'version-update:semver-major' ||
+          vars.DEPENDABOT_AUTOMERGE == 'all'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note held major bump
+        # Leaves a one-time breadcrumb so a held major is visible in the PR
+        # instead of silently waiting. Only fires for majors in the default
+        # ('true') tier.
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-major' &&
+          vars.DEPENDABOT_AUTOMERGE != 'all'
+        run: |
+          gh pr comment "$PR_URL" --body \
+            "🤖 Held for manual review: this is a **major** bump (\`${{ steps.meta.outputs.update-type }}\`) and \`DEPENDABOT_AUTOMERGE\` is \`true\` (patch/minor only). Review and merge by hand, or set the variable to \`all\` to auto-merge majors too." \
+            || echo "::warning::could not post held-major comment (continuing)"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
