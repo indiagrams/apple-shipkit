@@ -222,6 +222,17 @@ jobs:
         # so we keep it — we just don't want its Ruby at runtime.
         run: echo "/opt/homebrew/opt/ruby@3.3/bin" >> "$GITHUB_PATH"
 
+      - name: Verify ASC agreements are in effect
+        # Preflight (sibling of canary-trigger.yml's PAT preflight, #248):
+        # probe App Store Connect before the expensive/irreversible work
+        # (generator switch, cert mint, build, upload). Apple gates the whole
+        # ASC API behind an in-effect agreement; when one lapses this fails
+        # fast with an actionable runbook (which ASC screens the Account
+        # Holder must accept) instead of surfacing cryptically at compute tag
+        # or mid-cert-mint. Uses job-level ASC_API_KEY_* env; env-var auth path
+        # (no .bootstrap.env synthesized yet at this point).
+        run: bundle exec ruby bin/verify-asc-agreements.rb
+
       - name: Apply generator override
         # Optional input that overrides whatever generator the Makefile is
         # currently using. Mirrors canary-local-mode.yml's pattern: if

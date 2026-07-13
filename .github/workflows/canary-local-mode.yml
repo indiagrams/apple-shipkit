@@ -280,6 +280,14 @@ jobs:
         # use the same Ruby that built the extensions.
         run: echo "/opt/homebrew/opt/ruby@3.3/bin" >> "$GITHUB_PATH"
 
+      - name: Verify ASC agreements are in effect
+        # Preflight (sibling of canary-trigger.yml's PAT preflight, #248): probe
+        # App Store Connect before cert mint / build / upload. Apple gates the
+        # whole ASC API behind an in-effect agreement; when one lapses this
+        # fails fast with an actionable runbook instead of surfacing deep in
+        # bootstrap_asc / mint / pilot. Uses job-level ASC_API_KEY_* env.
+        run: bundle exec ruby bin/verify-asc-agreements.rb
+
       - name: Pre-install Apple WWDR intermediate certs
         # See release.yml's identical step (G4). fastlane match's auto-install
         # path can hang for 5+ min on GH Actions runners. We pre-install via

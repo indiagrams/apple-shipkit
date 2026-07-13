@@ -37,6 +37,41 @@ module Bootstrap
     FASTLANE_TEAM_ID
   ].freeze
 
+  # Raised when an App Store Connect API call is rejected because a required
+  # Apple agreement (Program License Agreement, Paid Applications Agreement,
+  # or freshly-updated terms) is unsigned or expired. Apple gates the ENTIRE
+  # ASC API behind an in-effect agreement, so this blocks every call
+  # account-wide — cert mint, build lookup, upload — until the Account Holder
+  # accepts it in the ASC web UI. No API or automation can accept it.
+  # Surfaced 2026-07-11 when the Saturday canary went red across all cells at
+  # the compute-release-tag step. The message is the actionable runbook.
+  class AscAgreementError < StandardError
+    # Apple raises this as a generic Spaceship::UnexpectedResponse (no typed
+    # class to rescue on), so detection is by message. Both phrases appear in
+    # the real error: "A required agreement is missing or has expired. - This
+    # request requires an in-effect agreement that has not been signed…".
+    def self.match?(err)
+      err.message.to_s =~ /(required|in-effect) agreement|agreement (is missing|has expired|has not been signed)/i
+    end
+
+    def initialize(original_message = nil)
+      detail = original_message ? "\n\n  ASC said: #{original_message.to_s.strip[0, 300]}" : ""
+      super(<<~MSG.chomp + detail)
+        App Store Connect rejected the request: a required Apple agreement is missing or has expired.
+        This blocks ALL ASC API calls for the account until it is accepted — no API or automation can do it.
+
+        Fix (Account Holder only, ~2 min):
+          1. Sign in at https://appstoreconnect.apple.com
+          2. Accept the pending banner on the home page, AND check
+             Business -> Agreements, Tax, and Banking for a pending agreement.
+          3. Also check https://developer.apple.com/account (Membership) for a
+             Program License Agreement banner.
+        Apple periodically updates these; acceptance unblocks every ship (the
+        canary AND your real app).
+      MSG
+    end
+  end
+
   # ─── Config loader ──────────────────────────────────────────────────────────
 
   class Config
@@ -1431,6 +1466,54 @@ module Bootstrap
       issuer_id: config["ASC_API_KEY_ISSUER_ID"],
       filepath:  p8_path.to_s
     )
+  end
+
+  # Create the Spaceship ASC token from ASC_API_KEY_* env vars — the CI path,
+  # where no .bootstrap.env exists yet (release.yml exports the creds before
+  # invoking bin scripts). Idempotent. Accepts ASC_API_KEY_P8_PATH (a PEM
+  # file) or ASC_API_KEY_P8_BASE64 (base64 PEM, decoded to a 0600 tmpfile).
+  # Mirrors bin/compute-release-tag.rb's env branch so both share one path.
+  def setup_asc_token_from_env!
+    require "spaceship"
+    return if Spaceship::ConnectAPI.token
+
+    %w[ASC_API_KEY_ID ASC_API_KEY_ISSUER_ID].each do |k|
+      raise "#{k} env var not set (and no .bootstrap.env present)." if ENV[k].to_s.empty?
+    end
+
+    p8_path = ENV["ASC_API_KEY_P8_PATH"]
+    if p8_path.to_s.empty?
+      b64 = ENV["ASC_API_KEY_P8_BASE64"]
+      raise "neither ASC_API_KEY_P8_PATH nor ASC_API_KEY_P8_BASE64 set." if b64.to_s.empty?
+
+      require "base64"
+      require "tmpdir"
+      p8_path = File.join(Dir.tmpdir, "asc_api_key_#{ENV.fetch('ASC_API_KEY_ID')}_verify.p8")
+      File.write(p8_path, Base64.decode64(b64))
+      File.chmod(0o600, p8_path)
+    end
+
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id:    ENV.fetch("ASC_API_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_API_KEY_ISSUER_ID"),
+      key:       File.read(p8_path),
+    )
+  end
+
+  # Minimal account-wide ASC probe. Apple gates the entire ASC API behind an
+  # in-effect agreement, so App.all trips the same rejection that would
+  # otherwise surface deep in compute-release-tag / cert mint / upload — but
+  # here we translate it to an actionable AscAgreementError. Caller must have
+  # set the Spaceship token first (ensure_asc_token! or setup_asc_token_from_env!).
+  # Returns nil on success; re-raises non-agreement errors unchanged.
+  def verify_asc_agreements!
+    require "spaceship"
+    Spaceship::ConnectAPI::App.all(limit: 1)
+    nil
+  rescue StandardError => e
+    raise AscAgreementError.new(e.message) if AscAgreementError.match?(e)
+
+    raise
   end
 
 
