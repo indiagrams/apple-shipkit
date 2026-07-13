@@ -110,7 +110,18 @@ module Bootstrap
       max_build = builds.map { |b| b.version.to_i }.max || 0
       max_build + 1
     rescue Spaceship::AccessForbiddenError, Spaceship::UnauthorizedAccessError => e
+      # Apple gates the whole ASC API behind an in-effect agreement; when it
+      # lapses, surface the actionable runbook instead of a raw denial.
+      raise Bootstrap::AscAgreementError.new(e.message) if defined?(Bootstrap::AscAgreementError) && Bootstrap::AscAgreementError.match?(e)
+
       raise "Bootstrap::Version: ASC denied access while resolving build number — #{e.message[0, 200]}"
+    rescue StandardError => e
+      # The agreement error arrives as a generic Spaceship::UnexpectedResponse
+      # (not AccessForbidden), so catch it here too and translate; re-raise
+      # everything else unchanged.
+      raise Bootstrap::AscAgreementError.new(e.message) if defined?(Bootstrap::AscAgreementError) && Bootstrap::AscAgreementError.match?(e)
+
+      raise
     end
 
     # Compose the full release tag. Caller must have ensured the ASC
