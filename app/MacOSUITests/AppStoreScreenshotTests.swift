@@ -67,7 +67,9 @@ final class AppStoreScreenshotTests: XCTestCase {
             if fileMenu.waitForExistence(timeout: 3) {
                 fileMenu.click()
                 let newWindow = app.menuItems["New Window"]
-                if newWindow.waitForExistence(timeout: 3) { newWindow.click() }
+                if newWindow.waitForExistence(timeout: 3) {
+                    newWindow.click()
+                }
             }
         }
 
