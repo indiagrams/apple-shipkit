@@ -155,6 +155,15 @@ else
   fail "Tag '$TAG' does not match v[0-9]+.[0-9]+.[0-9]+(...) (e.g. v0.1.0, v0.1.0-rc1)"
 fi
 
+# ── App icon ──────────────────────────────────────────────────────────────────
+
+# Before the archive, not after: an icon problem should cost seconds, not a full
+# signed build. This template's own icon is a placeholder, so this gate lives on
+# the release path rather than in local-check.sh — building with it is fine,
+# shipping it is a Guideline 2.3.8 rejection.
+step "App icon"
+"$REPO_ROOT/ci/check-app-icon.sh" || fail "placeholder app icon — see ci/check-app-icon.sh"
+
 # ── Regenerate xcodeproj + Generated-Info.plist ───────────────────────────────
 
 step "xcodegen generate"

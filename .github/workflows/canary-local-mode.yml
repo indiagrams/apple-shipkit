@@ -469,6 +469,11 @@ jobs:
           RELEASE_BUILD_NUMBER: ${{ github.run_number }}${{ matrix.generator == 'xcodegen' && '01' || '02' }}
           # Both platforms — exercises iOS .ipa + macOS .pkg signing paths.
           PLATFORMS: ios,macos
+          # The canary validates the shipping machinery, not the artwork, and it
+          # builds this template unmodified — whose icon is deliberately a
+          # placeholder. ci/check-app-icon.sh would otherwise stop the release
+          # lane here, which is exactly what it should do to a real fork.
+          ALLOW_PLACEHOLDER_ICON: "true"
           # The What-to-Test text. Picked up by the release lane's
           # annotate_testflight_whats_new step (apple-shipkit#149+). ASCII-only —
           # ASC's BetaBuildLocalization endpoint rejects non-Latin in whatsNew.

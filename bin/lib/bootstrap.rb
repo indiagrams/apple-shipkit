@@ -689,7 +689,8 @@ module Bootstrap
 
     def check
       unless config.set?("ICON_1024_PATH")
-        return [:warn, "ICON_1024_PATH unset; the template hammer icon will ship. Required for App Store review (not TestFlight)."]
+        return [:warn, "ICON_1024_PATH unset; the template placeholder icon (a flat blue square) will ship. "\
+                       "Required for App Store review, not TestFlight — and ci/check-app-icon.sh will refuse to release it."]
       end
       src = config.expand_path("ICON_1024_PATH")
       return [:blocked, "ICON_1024_PATH does not exist: #{src}"] unless src.file?
