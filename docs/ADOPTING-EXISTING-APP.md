@@ -159,6 +159,46 @@ make submit    # uploads YOUR metadata (now on disk after adopt), not placeholde
 
 The first `make ship` after adoption produces TestFlight build `v3.4.2+<N+1>` where `N` is your previous build count.
 
+## Moving an app between Apple teams
+
+Adopting an existing app sometimes comes with a second question: the app is on
+a personal team and you want it under an organization. App Store Connect has a
+transfer flow for this, but it has hard constraints that are easy to discover
+too late.
+
+- **Transfer requires at least one released version.** Apple's
+  [app transfer criteria](https://developer.apple.com/help/app-store-connect/transfer-an-app/app-transfer-criteria)
+  require the app to have had a version released to the App Store. An app that
+  has only ever been in Prepare for Submission — including one with TestFlight
+  builds — cannot be transferred at all.
+
+- **A transfer changes your team prefix, and that breaks the keychain.**
+  `keychain-access-groups` and `com.apple.security.application-groups` resolve
+  through `$(AppIdentifierPrefix)` / `$(TeamIdentifierPrefix)` to
+  `<TeamID>.<identifier>`. After a transfer the prefix is the recipient's, so
+  every existing item in those groups becomes unreadable. Apple documents the
+  consequence as *"users must re-login once"*. For an app that stores only a
+  session token that is a shrug; for an app holding credentials, encryption
+  keys, or Secure Enclave key references it is silent data loss for every
+  installed user. **If you can move teams before your first public release, do
+  — the cost is config churn instead of user data.**
+
+- **A bundle ID is bound to its account permanently by the first TestFlight
+  upload.** It cannot be reclaimed by a different team afterwards, so a team
+  move that isn't a transfer means a **new bundle ID**. Bundle IDs are not
+  user-visible; this is cheaper than it sounds, and cheapest before you ship.
+
+- **An unreleased app record reserves its name.** To free a name for a record
+  on another team, **rename the old record** (e.g. to
+  `ZZZ_DO_NOT_USE_<name>`) rather than deleting it. Deleting releases the name
+  into the general pool *for everyone except you*, which is the opposite of
+  what you want. Renaming an unreleased record is free and immediate, though
+  the name can take a few minutes to become available.
+
+- **TestFlight does not come along.** Builds and testers do not transfer, and
+  Apple requires beta testing to be turned off and Xcode Cloud data removed
+  before a transfer is accepted. Testers reinstall either way.
+
 ## When NOT to run `make adopt`
 
 - **Greenfield forks** — no existing App Store app. Edit metadata files directly. `make adopt` would fail with "no ASC App record found".

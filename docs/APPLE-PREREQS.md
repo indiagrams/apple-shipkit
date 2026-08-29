@@ -52,6 +52,7 @@ Once you've enrolled in the Apple Developer Program:
   - Role: App Manager (or higher)
   - Download the `.p8` private key — **download is one-time only**, save it carefully.
   - Note the **Key ID** and **Issuer ID** shown alongside.
+- [ ] **Register your build Mac** — <https://developer.apple.com/account/resources/devices/list> → "+" → macOS. Needed before the first macOS archive on a brand-new team; see Common gotchas below for why, and for which identifier to use.
 - [ ] Place the `.p8` file **outside the repo** (e.g., `~/.appstoreconnect/`). The template's `.gitignore` blocks `*.p8`, but accidents happen.
 - [ ] Configure fastlane to read the API key from your local secrets path. See `fastlane/Fastfile` for the expected env vars.
 
@@ -74,6 +75,12 @@ If you accidentally commit any of these, treat it as a credential leak: revoke t
 - **Team membership ≠ ownership.** If you're added to someone else's Apple Developer team as a member, you can sign builds but may not have App Store Connect access. Coordinate with your team's Account Holder.
 - **D-U-N-S number lookup is free.** If Apple says you need to "obtain" one for an Organization enrollment, use the free Apple lookup tool — don't pay D&B for one.
 - **Apple ID without 2FA can't be added to a developer team** (Apple requirement). Enable 2FA before enrollment.
+- **A brand-new team can't archive macOS until a Mac is registered.** When signing automatically — i.e. without `RELEASE_MACOS_PROFILE_NAME` + `RELEASE_MACOS_CERT_SHA1` pinned — `xcodebuild archive` provisions a Mac *development* profile before export re-signs for the App Store, and Apple requires a Mac development profile to contain at least one registered device. iOS profiles can be created with zero devices; macOS ones cannot. On a team with no devices the archive fails with `Your team has no devices from which to generate a provisioning profile` followed by `couldn't find any Mac App Development provisioning profiles`. Register the build Mac (see the checklist above). The pinned manual-signing path doesn't hit this, because the profile already exists.
+- **The macOS Provisioning UDID is not the Hardware UUID.** On Apple Silicon these are two different values and only the Provisioning UDID is accepted:
+  ```bash
+  system_profiler SPHardwareDataType | awk -F': ' '/Provisioning UDID/{print $2}'
+  ```
+  Registering the Hardware UUID instead (what `ioreg -c IOPlatformExpertDevice` reports as `IOPlatformUUID`) *appears* to work — the archive starts succeeding, because the team now holds at least one device — and then fails much later, at the first `xcodebuild test` or run on that Mac, with `Provisioning profile ... doesn't include the currently selected device`. Two different requirements, both surfacing as "provisioning profile" errors.
 
 ## Per-team certificate quotas (verified empirically)
 
