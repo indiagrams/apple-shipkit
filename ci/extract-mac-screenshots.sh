@@ -161,39 +161,83 @@ APPLE_SIZES = [(2880, 1800), (2560, 1600), (1440, 900), (1280, 800)]
 
 def crop_to_apple_size(path):
     """Crop a window screenshot to the nearest Apple App Store macOS size.
-    Window screenshots include the macOS title bar (~64px @2x) above the content,
-    which makes them slightly taller than Apple's accepted sizes. Crop the
-    bottom (whitespace below content) to preserve the title bar — that's the
-    most informative part of the frame for App Store browsers."""
-    out = subprocess.check_output(
-        ["sips", "-g", "pixelWidth", "-g", "pixelHeight", path]
-    ).decode()
-    w = h = 0
-    for line in out.splitlines():
-        if "pixelWidth" in line:  w = int(line.split(":")[1])
-        if "pixelHeight" in line: h = int(line.split(":")[1])
-    if not (w and h):
+
+    Anchored on the window's own opaque rectangle, not on the image centre.
+    XCUITest returns the window plus its drop-shadow margin, and the window
+    server does not place the window identically on every run — a fixed centre
+    or edge offset therefore crops a different part of the frame each time,
+    which on one run clipped the title mid-glyph and on the next left a band of
+    empty margin. Locating the opaque rect first makes the result deterministic:
+    the crop starts at the window's top-left corner, so the title bar is always
+    whole and only the shadow and trailing whitespace are discarded.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        print("    warn: Pillow not available; screenshot left uncropped "
+              "(Apple requires an exact size and will reject it)", file=sys.stderr)
         return False
-    # Find the largest accepted size that fits within the captured image.
-    target = next(((tw, th) for tw, th in APPLE_SIZES
-                   if tw <= w and th <= h), None)
+
+    im = Image.open(path)
+    w, h = im.size
+    target = next(((tw, th) for tw, th in APPLE_SIZES if tw <= w and th <= h), None)
     if not target:
-        print(f"    warn: {os.path.basename(path)} ({w}x{h}) is smaller than every Apple-accepted size; left as-is",
-              file=sys.stderr)
+        print(f"    warn: {os.path.basename(path)} ({w}x{h}) is smaller than every "
+              f"Apple-accepted size; left as-is", file=sys.stderr)
         return False
     tw, th = target
-    if (w, h) == (tw, th):
+
+    # The opaque window rect. Shadow pixels are partially transparent, so a
+    # near-opaque threshold separates the window from the shadow that surrounds it.
+    x0 = y0 = 0
+    if im.mode == "RGBA":
+        solid = im.getchannel("A").point(lambda a: 255 if a >= 250 else 0)
+        box = solid.getbbox()
+        if box:
+            x0, y0 = box[0], box[1]
+
+    # Clamp so the crop stays inside the image.
+    x0 = max(0, min(x0, w - tw))
+    y0 = max(0, min(y0, h - th))
+
+    if (w, h) == (tw, th) and (x0, y0) == (0, 0):
         return True
-    # Vertical: shift crop center up by (h-th)/2 so the bottom is dropped.
-    # Horizontal: center.
-    offset_y = -((h - th) // 2)
-    subprocess.run(
-        ["sips", "-c", str(th), str(tw),
-         "--cropOffset", str(offset_y), "0",
+
+    im.crop((x0, y0, x0 + tw, y0 + th)).save(path, "PNG")
+    print(f"    cropped: {os.path.basename(path)} {w}x{h} → {tw}x{th} "
+          f"(anchored at window {x0},{y0})")
+    return True
+
+
+def flatten_alpha(path):
+    """Composite the screenshot onto opaque white and strip the alpha channel.
+
+    XCUITest window captures carry the window's drop-shadow margin and rounded
+    corners as fully transparent pixels (0,0,0,0). Two problems: Apple rejects
+    App Store screenshots that contain an alpha channel outright, and any viewer
+    that does keep the alpha renders those regions black, which reads as a
+    rendering glitch around the window corners. White matches the app's own
+    background, so the margin disappears into the frame."""
+    out = subprocess.run(
+        ["sips", "-s", "format", "png", "-s", "formatOptions", "best",
+         "--matchTo", "/System/Library/ColorSync/Profiles/sRGB Profile.icc",
          path, "--out", path],
-        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    print(f"    cropped: {os.path.basename(path)} {w}x{h} → {tw}x{th}")
+    # sips has no alpha-flatten verb, so composite explicitly.
+    try:
+        from PIL import Image
+    except ImportError:
+        print("    warn: Pillow not available; alpha channel left in place "
+              "(Apple will reject the upload)", file=sys.stderr)
+        return False
+    im = Image.open(path)
+    if im.mode != "RGBA":
+        return True
+    bg = Image.new("RGB", im.size, (255, 255, 255))
+    bg.paste(im, mask=im.split()[3])
+    bg.save(path, "PNG")
+    print(f"    flattened: {os.path.basename(path)} RGBA → RGB on white")
     return True
 
 
@@ -209,6 +253,7 @@ for name, payload in unique:
     size = os.path.getsize(out_path)
     print(f"    extracted: {name} ({size:,} bytes)")
     crop_to_apple_size(out_path)
+    flatten_alpha(out_path)
     count += 1
 
 print(f"    ✓ {count} screenshot(s) → {out_dir}")
