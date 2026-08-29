@@ -48,6 +48,9 @@
 #   --release-mode=ci|local         Bootstrap mode written to .bootstrap.env (default: ci)
 #   --bundle-id=ID                  App bundle id (default: com.indiagram.smoke-app)
 #   --asc-app-name=NAME             ASC app record name (default: Indiagram Smoke App)
+#   --skip-cert-revoke              Skip revoking "Created via API" certs — REQUIRED
+#                                   when the Apple team is shared with other apps
+#                                   (a team-wide revoke kills co-tenant certs)
 #   -h, --help                      Show this message
 
 set -euo pipefail
@@ -57,6 +60,7 @@ set -euo pipefail
 KEEP_CERTS=true
 GENERATOR=xcodegen
 RELEASE_MODE=ci
+SKIP_CERT_REVOKE=false
 
 usage() {
   awk '/^# Usage:/{flag=1} flag && /^[^#]/{exit} flag{sub(/^# ?/, ""); print}' "$0"
@@ -71,6 +75,7 @@ while [ $# -gt 0 ]; do
     --release-mode=*)         RELEASE_MODE="${1#*=}" ;;
     --bundle-id=*)            BUNDLE_ID="${1#*=}" ;;
     --asc-app-name=*)         ASC_APP_NAME="${1#*=}" ;;
+    --skip-cert-revoke)       SKIP_CERT_REVOKE=true ;;
     -h|--help)                usage 0 ;;
     *)                        echo "unknown flag: $1" >&2; usage 64 ;;
   esac
@@ -137,21 +142,27 @@ echo "  archive → $ARCHIVE_DIR"
 
 # ─── 2. Revoke residue Apple certs ────────────────────────────────────────────
 
-echo "=== 2/8: revoke 'Created via API' Apple certs (smoketest residue) ==="
-unset APP_STORE_CONNECT_API_KEY_KEY APP_STORE_CONNECT_API_KEY_KEY_FILEPATH \
-      APP_STORE_CONNECT_API_KEY_KEY_ID APP_STORE_CONNECT_API_KEY_ISSUER_ID
-
-if [ -d "$CLONE_DIR/fastlane" ]; then
-  pushd "$CLONE_DIR" >/dev/null
-  bundle exec fastlane list_certs 2>&1 \
-    | awk '/Created via API/ { for (i=1;i<=NF;i++) if ($i ~ /^[A-Z0-9]{10}$/) { print $i; break } }' \
-    | while read -r cert_id; do
-        echo "  revoking $cert_id"
-        bundle exec fastlane revoke_cert "id:$cert_id" 2>&1 | grep -E "Revoked|error" | head -1
-      done
-  popd >/dev/null
+if [ "$SKIP_CERT_REVOKE" = true ]; then
+  echo "=== 2/8: SKIPPING 'Created via API' cert revocation (--skip-cert-revoke) ==="
+  echo "  The Apple team is shared with other apps; a team-wide revoke would kill"
+  echo "  co-tenant certs. The canary mints + revokes its own certs each run."
 else
-  echo "  no local smoketest clone at $CLONE_DIR; skipping cert revocation"
+  echo "=== 2/8: revoke 'Created via API' Apple certs (smoketest residue) ==="
+  unset APP_STORE_CONNECT_API_KEY_KEY APP_STORE_CONNECT_API_KEY_KEY_FILEPATH \
+        APP_STORE_CONNECT_API_KEY_KEY_ID APP_STORE_CONNECT_API_KEY_ISSUER_ID
+
+  if [ -d "$CLONE_DIR/fastlane" ]; then
+    pushd "$CLONE_DIR" >/dev/null
+    bundle exec fastlane list_certs 2>&1 \
+      | awk '/Created via API/ { for (i=1;i<=NF;i++) if ($i ~ /^[A-Z0-9]{10}$/) { print $i; break } }' \
+      | while read -r cert_id; do
+          echo "  revoking $cert_id"
+          bundle exec fastlane revoke_cert "id:$cert_id" 2>&1 | grep -E "Revoked|error" | head -1
+        done
+    popd >/dev/null
+  else
+    echo "  no local smoketest clone at $CLONE_DIR; skipping cert revocation"
+  fi
 fi
 
 # ─── 3. Delete app repo + clear local clone ───────────────────────────────────
