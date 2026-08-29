@@ -209,7 +209,7 @@ fi
 
 echo "=== 5/8: re-fork smoketest from $TEMPLATE_REPO ==="
 ( cd "$CLONE_PARENT" && \
-    gh repo create "$APP_REPO" --template "$TEMPLATE_REPO" --public --clone -- --quiet 2>&1 | tail -1 )
+    gh repo create "$APP_REPO" --template "$TEMPLATE_REPO" --public --clone 2>&1 | tail -1 )
 [ -d "$CLONE_DIR" ] || { echo "expected clone at $CLONE_DIR but it's missing" >&2; exit 1; }
 echo "  fresh fork at $CLONE_DIR"
 
@@ -271,6 +271,12 @@ Next:
   cd $CLONE_DIR
   make doctor          # validate state — should be ✗-pending in many places
   make bootstrap-fork  # mints certs (ci) or probes keychain (local)
+
+  # ⚠ The app repo was DELETED + recreated, so it has a NEW database id.
+  #   Fine-grained PATs scoped to the OLD repo lose access. Re-scope the
+  #   SMOKETEST_DISPATCH_PAT (github.com/settings/personal-access-tokens →
+  #   Repository access) to the recreated $APP_REPO, or canary-trigger's
+  #   dispatch step 403s with "Resource not accessible by personal access token".
   # or:
   make all             # one-shot: doctor → bootstrap-fork → ship → verify
 ===============================================================================
