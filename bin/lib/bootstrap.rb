@@ -626,7 +626,7 @@ module Bootstrap
     end
 
     def do_it
-      env = asc_env(config)
+      env = Bootstrap.asc_env(config)
       Sh.run!("bundle", "exec", "fastlane", "register_app_id", env: env)
     end
   end
