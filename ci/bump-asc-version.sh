@@ -80,7 +80,10 @@ if $CAPTURE; then
   $IOS   || capture_args+=(--macos-only)
   $MACOS || capture_args+=(--ios-only)
   step "Capture screenshots"
-  ./ci/take-screenshots.sh "${capture_args[@]}"
+  # "${a[@]}" on an empty array is an unbound-variable error under `set -u` in
+  # bash 3.2, which is what /bin/bash still is on macOS. capture_args is empty
+  # in the default both-platform mode, so this aborted every default run.
+  ./ci/take-screenshots.sh ${capture_args[@]+"${capture_args[@]}"}
 fi
 
 # ── 2 + 3. Bump ASC version + attach TestFlight build ────────────────────────
@@ -114,5 +117,7 @@ fi
 step "Done"
 ok "Both ASC records ready at $TAG."
 ok "Submit when ready:"
-$IOS   && ok "  bundle exec fastlane ios submit_for_review"
-$MACOS && ok "  bundle exec fastlane mac submit_for_review"
+# Plain `$IOS && ok ...` as the final command makes the script exit non-zero
+# whenever that flag is false, reporting failure after a clean run.
+if $IOS;   then ok "  bundle exec fastlane ios submit_for_review"; fi
+if $MACOS; then ok "  bundle exec fastlane mac submit_for_review"; fi
