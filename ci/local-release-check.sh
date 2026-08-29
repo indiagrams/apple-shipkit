@@ -71,6 +71,7 @@ fi
 
 step() { printf '\n==> %s\n' "$*"; }
 ok()   { printf '    ✓ %s\n' "$*"; }
+warn() { printf '    ! %s\n' "$*" >&2; }
 fail() { printf '    ✗ %s\n' "$*" >&2; exit 1; }
 
 
@@ -427,9 +428,32 @@ if $SIGN_MACOS; then
     "$EXPANDED_APP"
 
   step "macOS: productbuild"
-  INSTALLER_CERT=$(security find-identity -v -p basic 2>/dev/null \
-    | grep -E "3rd Party Mac Developer Installer|Mac Installer Distribution" \
-    | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+  # Prefer the installer identity belonging to THIS team. A keychain holding more
+  # than one "3rd Party Mac Developer Installer" — a personal team alongside an
+  # org team, or a rotated cert — previously got whichever `head -1` returned.
+  # productbuild then signed the .pkg with another team's installer cert, which
+  # App Store Connect rejects on upload, after a full build. This is the same
+  # ambiguity the code-signing path already pins away with RELEASE_MACOS_CERT_SHA1,
+  # left unhandled for the installer cert.
+  #
+  # RELEASE_MACOS_INSTALLER_SHA1 overrides the search entirely.
+  INSTALLER_LINES=$(security find-identity -v -p basic 2>/dev/null \
+    | grep -E "3rd Party Mac Developer Installer|Mac Installer Distribution")
+  if [ -n "${RELEASE_MACOS_INSTALLER_SHA1:-}" ]; then
+    INSTALLER_CERT="$RELEASE_MACOS_INSTALLER_SHA1"
+    ok "macOS installer identity pinned → $INSTALLER_CERT"
+  else
+    INSTALLER_CERT=$(printf '%s\n' "$INSTALLER_LINES" | grep -F "($TEAM_ID)" \
+      | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+    if [ -z "$INSTALLER_CERT" ]; then
+      INSTALLER_CERT=$(printf '%s\n' "$INSTALLER_LINES" \
+        | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+      [ -n "$INSTALLER_CERT" ] && \
+        warn "no installer identity for team $TEAM_ID; falling back to '$INSTALLER_CERT'"
+    else
+      ok "macOS installer identity → '$INSTALLER_CERT'"
+    fi
+  fi
   [ -z "$INSTALLER_CERT" ] && fail "Mac Installer Distribution cert not found in keychain — install one from developer.apple.com → Certificates → '+' → Mac Installer Distribution"
 
   PKG_DEST="$REPO_ROOT/build/HelloApp-${VERSION}.pkg"
