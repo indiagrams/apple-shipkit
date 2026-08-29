@@ -437,8 +437,12 @@ if $SIGN_MACOS; then
   # left unhandled for the installer cert.
   #
   # RELEASE_MACOS_INSTALLER_SHA1 overrides the search entirely.
+  # `|| true`: under `set -euo pipefail` a zero-match grep would abort the
+  # script right here — silent exit 1 — BEFORE the explicit "cert not found"
+  # fail below can report it. Swallow the no-match so execution falls through
+  # to the empty-INSTALLER_CERT guard, which fails loud with a fix hint.
   INSTALLER_LINES=$(security find-identity -v -p basic 2>/dev/null \
-    | grep -E "3rd Party Mac Developer Installer|Mac Installer Distribution")
+    | grep -E "3rd Party Mac Developer Installer|Mac Installer Distribution" || true)
   if [ -n "${RELEASE_MACOS_INSTALLER_SHA1:-}" ]; then
     INSTALLER_CERT="$RELEASE_MACOS_INSTALLER_SHA1"
     ok "macOS installer identity pinned → $INSTALLER_CERT"

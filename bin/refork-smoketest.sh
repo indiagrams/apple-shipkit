@@ -27,7 +27,8 @@
 # `make all`) from inside ../ios-macos-smoketest.
 #
 # Apple-side state NOT touched (Apple disallows API deletion):
-#   - Bundle ID com.indiagram.smoke-app (idempotent register_app_id covers it)
+#   - Bundle ID (--bundle-id; default com.indiagram.smoke-app) — idempotent
+#     register_app_id covers it
 #   - ASC App record (verify-mode bootstrap_asc covers it)
 #
 # Required env (read from ~/.config/secrets.env):
@@ -45,6 +46,8 @@
 #   --nuke-certs-repo               Delete + recreate certs repo (PAT update needed)
 #   --generator=xcodegen|tuist      Project generator (default: xcodegen)
 #   --release-mode=ci|local         Bootstrap mode written to .bootstrap.env (default: ci)
+#   --bundle-id=ID                  App bundle id (default: com.indiagram.smoke-app)
+#   --asc-app-name=NAME             ASC app record name (default: Indiagram Smoke App)
 #   -h, --help                      Show this message
 
 set -euo pipefail
@@ -66,6 +69,8 @@ while [ $# -gt 0 ]; do
     --nuke-certs-repo)        KEEP_CERTS=false ;;
     --generator=*)            GENERATOR="${1#*=}" ;;
     --release-mode=*)         RELEASE_MODE="${1#*=}" ;;
+    --bundle-id=*)            BUNDLE_ID="${1#*=}" ;;
+    --asc-app-name=*)         ASC_APP_NAME="${1#*=}" ;;
     -h|--help)                usage 0 ;;
     *)                        echo "unknown flag: $1" >&2; usage 64 ;;
   esac
@@ -89,11 +94,11 @@ TEMPLATE_REPO="$ORG/apple-shipkit"
 APP_REPO="$ORG/ios-macos-smoketest"
 CERTS_REPO="$ORG/ios-macos-smoketest-certs"
 APP_NAME=SmokeApp
-BUNDLE_ID=com.indiagram.smoke-app
+BUNDLE_ID="${BUNDLE_ID:-com.indiagram.smoke-app}"
 DISPLAY_NAME='Indiagram Smoke App'
 APP_EMAIL=smoketest@indiagram.com
 ASC_APP_SKU=indiagram-smoke-001
-ASC_APP_NAME='Indiagram Smoke App'
+ASC_APP_NAME="${ASC_APP_NAME:-Indiagram Smoke App}"
 
 CLONE_PARENT="$(cd .. && pwd)"
 CLONE_DIR="$CLONE_PARENT/ios-macos-smoketest"
