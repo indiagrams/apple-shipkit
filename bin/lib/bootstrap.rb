@@ -893,6 +893,93 @@ module Bootstrap
     end
   end
 
+  # App Store Connect refuses a submission until the App record carries a primary
+  # category, an age rating, and a price schedule. None of the three is needed for
+  # TestFlight, so a fork can get all the way to a working beta and only meet them
+  # at the App Store submission — which is the worst moment to discover them,
+  # because ASC reports only the FIRST unmet requirement, not the list. Finding
+  # them one at a time costs one failed submission each.
+  #
+  # This asks for all three at once, so `make doctor` can report them together.
+  #
+  # Advisory (:warn), never blocking: they gate App Store review, not TestFlight,
+  # which is the same line AppPrivacyForm draws.
+  class AppStoreSubmissionPrereqs < Step
+    def name; "App Store submission prerequisites (category, age rating, price)"; end
+    def category; "human-gated"; end
+
+    def check
+      return :done if ENV["ASC_SUBMISSION_PREREQS_ACK"].to_s.strip.downcase == "true"
+      require "spaceship"
+      Bootstrap.ensure_asc_token!(config)
+      app = Spaceship::ConnectAPI::App.find(config["BUNDLE_ID"])
+      return [:warn, "ASC App record not found (covered by VerifyAscApp); submission prerequisites skipped."] unless app
+
+      missing = []
+      info = asc_get("/v1/apps/#{app.id}/appInfos?include=primaryCategory&limit=10")
+             &.fetch("data", [])&.first
+      missing << :category   if info.nil? || info.dig("relationships", "primaryCategory", "data", "id").nil?
+      missing << :age_rating if info.nil? || info.dig("attributes", "appStoreAgeRating").nil?
+
+      # Deliberately manualPrices, not the appPriceSchedule resource itself:
+      # the schedule returns 200 with an id even for an app that has never been
+      # priced, so its existence proves nothing. manualPrices 404s until a price
+      # is actually set. Verified against a priced app (200, 1 entry) and an
+      # unpriced one (404, 0).
+      prices = asc_get("/v1/appPriceSchedules/#{app.id}/manualPrices?limit=1")
+      missing << :pricing if prices.nil? || prices.fetch("data", []).empty?
+
+      return :done if missing.empty?
+      [:warn, prereq_msg(missing)]
+    rescue StandardError => e
+      [:warn, "App Store submission prerequisites probe failed: #{e.message[0, 200]}"]
+    end
+
+    def do_it
+      # No-op; check returns :warn or :done, never :pending.
+    end
+
+    private
+
+    # Raw ASC GET on the token Spaceship already holds.
+    #
+    # Not spaceship's models: `fetch_app_prices` raises against the current API
+    # (Apple replaced app prices with appPriceSchedules), and the age rating that
+    # matters here lives on appInfos, not on the AgeRatingDeclaration the model
+    # exposes. AppPrivacyForm carries the same scar — Apple renames these
+    # surfaces faster than the gem follows. Returns nil on any non-2xx.
+    def asc_get(path)
+      require "net/http"
+      require "json"
+      uri = URI("https://api.appstoreconnect.apple.com#{path}")
+      req = Net::HTTP::Get.new(uri)
+      req["Authorization"] = "Bearer #{Spaceship::ConnectAPI.token.text}"
+      res = Net::HTTP.start(uri.host, uri.port, use_ssl: true, read_timeout: 30) { |h| h.request(req) }
+      return nil unless res.code.to_i.between?(200, 299)
+      JSON.parse(res.body)
+    rescue StandardError
+      nil
+    end
+
+    LABELS = {
+      category:   'Primary category — App Store Connect → your app → App Information → Category',
+      age_rating: 'Age rating — App Store Connect → your app → App Information → Age Rating → Edit',
+      pricing:    'Price schedule — App Store Connect → your app → Pricing and Availability (free apps must still pick a price of 0)'
+    }.freeze
+
+    def prereq_msg(missing)
+      lines = missing.map { |k| "  • #{LABELS[k]}" }.join("\n")
+      <<~MSG.strip
+        #{missing.length} App Store submission prerequisite#{missing.length == 1 ? '' : 's'} not set:
+        #{lines}
+          These do not block TestFlight, so a beta can ship without them. They do block
+          App Store submission — and ASC reports only the first one it hits, so finding
+          them by submitting costs a review cycle each.
+          Suppress this check once set: export ASC_SUBMISSION_PREREQS_ACK=true
+      MSG
+    end
+  end
+
   class XcodeQuarantine < Step
     def name; "Xcode.app quarantine xattr"; end
 
@@ -1314,6 +1401,7 @@ module Bootstrap
       ScanMetadata,          # informational
       ScanScreenshots,
       AppPrivacyForm,        # informational; queries ASC for App Privacy publish state
+      AppStoreSubmissionPrereqs, # informational; category + age rating + price schedule
       XcodeQuarantine,       # informational; advisory-only check for com.apple.quarantine xattr on Xcode.app
       FastlaneTmpKeychain,   # informational; advisory-only check for leaked setup_ci temp keychains
       DefaultKeychain        # informational; advisory-only check that user-domain default keychain is set
