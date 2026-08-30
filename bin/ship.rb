@@ -91,7 +91,13 @@ if config.local_mode?
   args = ["bundle", "exec", "fastlane", "release", "tag:#{tag}"]
   args << "skip_upload:true" if dry_run == "true"
 
-  out, ok = Bootstrap::Sh.run(*args, env: env)
+  # Sh.stream, not Sh.run: this is the longest-running command in the whole
+  # tool and its output is the only record of what happened. Sh.run would
+  # buffer it through capture3, drop stderr, and hand back a string this
+  # branch then throws away on success — so `make ship > ship.log` captured
+  # 13 lines of this script's own puts and nothing from fastlane, on a failed
+  # release as readily as on a good one.
+  _out, ok = Bootstrap::Sh.stream(*args, env: env)
   if ok
     puts
     puts Bootstrap::UI.bold("✅ Local release succeeded.")
@@ -99,8 +105,9 @@ if config.local_mode?
     puts "Run #{Bootstrap::UI.bold 'make verify'} to confirm TestFlight ingestion (~5-15 min)."
     exit 0
   else
-    puts out
-    Bootstrap::UI.fail!("fastlane release failed.")
+    # No `puts out` here — it has already been printed, in order and with
+    # stderr interleaved, as it happened.
+    Bootstrap::UI.fail!("fastlane release failed. The fastlane output above is the diagnosis.")
   end
 end
 
