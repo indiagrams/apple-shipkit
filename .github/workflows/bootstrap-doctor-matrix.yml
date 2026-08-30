@@ -45,6 +45,7 @@ on:
   pull_request:
     paths:
       - 'test/parser_test.rb'
+      - 'test/sh_stream_test.rb'
       - 'Makefile'
       - '.github/workflows/bootstrap-doctor-matrix.yml'
       - 'bin/lib/bootstrap.rb'
@@ -259,6 +260,24 @@ jobs:
           bundler-cache: false  # parser_test.rb is stdlib-only; no bundle exec needed
       - name: Run parser regression fixtures
         run: ruby test/parser_test.rb
+
+  # `make ship` on a real release wrote a 13-line log: everything ship.rb
+  # printed itself, and nothing from the fastlane run those lines described.
+  # Sh.run's capture3 buffered fastlane's output, dropped stderr, and returned
+  # a string the success branch discarded — so a FAILED ship was equally
+  # undiagnosable. Sh.stream fixes it; this pins the contract. Stdlib-only and
+  # platform-agnostic, so it runs on ubuntu like the parser test.
+  stream-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # sh_stream_test.rb is stdlib-only; no bundle exec needed
+      - name: Run Sh.stream regression tests
+        run: ruby test/sh_stream_test.rb
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in

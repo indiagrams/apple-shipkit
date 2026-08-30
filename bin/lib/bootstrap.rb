@@ -303,11 +303,73 @@ module Bootstrap
     end
 
     # Run a command; capture output regardless of exit. Returns [stdout, success?]
+    #
+    # Note what this DISCARDS: stderr, and every byte of progress until the
+    # command exits. That is fine for the short `gh`/`git` queries it was
+    # written for. It is wrong for anything long-running or anything whose
+    # output is the point — use `stream` for those.
     def run(*cmd, env: {}, cwd: REPO_ROOT)
       Dir.chdir(cwd) do
         out, _err, status = Open3.capture3(env, *cmd)
         [out, status.success?]
       end
+    end
+
+    # Run a command, echoing its output as it arrives while also capturing it.
+    # Returns [combined_output, success?].
+    #
+    # WHY THIS EXISTS, separately from `run`
+    #
+    # `run` buffers through Open3.capture3 and drops stderr. For a fastlane
+    # release — minutes long, and diagnostically nothing BUT its output — that
+    # fails twice over: the operator watches a silent terminal with no way to
+    # tell a slow upload from a hung one, and `make ship > ship.log` records
+    # only the caller's own `puts`. A full release logged 13 lines that way,
+    # and a FAILED release logged 13 lines too, which is the case where the
+    # output was the only thing worth having.
+    #
+    # Two callers already worked around this individually by reaching for
+    # Kernel.system (bin/clean-revoked-certs.rb, bin/revoke-orphan-certs.rb).
+    # Those two also need stdin, because fastlane prompts them — and this
+    # method closes stdin, so it is NOT a replacement for them. It covers the
+    # other half: non-interactive commands that must stay visible.
+    #
+    # popen2e rather than popen3: fastlane writes to both streams and their
+    # interleaving is meaningful, so merging them at the source preserves the
+    # order a human needs to read. Draining one pipe also cannot deadlock
+    # against the other filling up.
+    def stream(*cmd, env: {}, cwd: REPO_ROOT, io: $stdout)
+      buf = +""
+      status = nil
+      # `chdir:` as a spawn option, NOT Dir.chdir as `run` does. Dir.chdir
+      # mutates the whole process's working directory for the lifetime of the
+      # command, which for a multi-minute fastlane run is a long time to hold a
+      # global; anything else running concurrently either sees the wrong cwd or
+      # raises "conflicting chdir during another chdir block". Handing the
+      # directory to the child is both narrower and thread-safe.
+      opts = { chdir: cwd.to_s }
+      was_sync = io.respond_to?(:sync) ? io.sync : nil
+      io.sync = true if io.respond_to?(:sync=) # a redirect must keep whatever
+      begin                                    # was written before a crash
+        Open3.popen2e(env, *cmd, **opts) do |stdin, out_err, wait_thr|
+          stdin.close
+          out_err.each_line do |line|
+            io.print(line)
+            buf << line
+          end
+          status = wait_thr.value
+        end
+      ensure
+        # Best-effort restore: the caller may have closed `io` already (a
+        # Tempfile block that ended), and failing to put a flag back is never
+        # worth masking the real result or error.
+        begin
+          io.sync = was_sync unless was_sync.nil?
+        rescue IOError
+          nil
+        end
+      end
+      [buf, !status.nil? && status.success?]
     end
 
     # Quiet boolean check.
