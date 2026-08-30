@@ -243,16 +243,35 @@ jobs:
         timeout-minutes: 5   # typical ~40s; 5m absorbs cold caches
         run: |
           set -o pipefail
+          # -derivedDataPath so the next step knows where the .app landed;
+          # without it the product is somewhere under a hashed DerivedData dir.
           xcodebuild build \
             -project "app/${{ vars.APP_NAME || 'HelloApp' }}.xcodeproj" \
             -scheme "${{ vars.APP_NAME || 'HelloApp' }}-iOS" \
             -configuration Debug \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd-ios" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | xcbeautify --renderer github-actions
+
+      # Runs on the BUILT app, which is why it lives here rather than in the
+      # lint job: the question is what the bundle actually embeds, and only a
+      # build can answer it. On a fork that embeds no frameworks this reports
+      # "nothing to compare" and passes — out loud, so a green result is
+      # distinguishable from a check that never looked.
+      - name: check embedded framework floors
+        if: matrix.platform == 'ios-device'
+        run: |
+          set -euo pipefail
+          APP="$(find "$RUNNER_TEMP/dd-ios/Build/Products" -maxdepth 2 -name '*.app' | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::no .app under $RUNNER_TEMP/dd-ios/Build/Products"
+            exit 1
+          fi
+          bash ci/check-embedded-floors.sh "$APP"
 
       - name: test iOS Simulator (unsigned)
         if: matrix.platform == 'ios-sim'
