@@ -46,6 +46,8 @@ on:
     paths:
       - 'test/parser_test.rb'
       - 'test/sh_stream_test.rb'
+      - 'test/build_number_test.rb'
+      - 'bin/lib/version_resolver.rb'
       - 'Makefile'
       - '.github/workflows/bootstrap-doctor-matrix.yml'
       - 'bin/lib/bootstrap.rb'
@@ -278,6 +280,25 @@ jobs:
           bundler-cache: false  # sh_stream_test.rb is stdlib-only; no bundle exec needed
       - name: Run Sh.stream regression tests
         run: ruby test/sh_stream_test.rb
+
+  # next_build_number used to scope its ASC query to the CURRENT marketing
+  # version, so bumping the version reset the build count to 1 and Apple
+  # refused the upload: CFBundleVersion must exceed what was previously
+  # uploaded for the platform, and once a version is released that spans the
+  # app's whole history. Downstream, one `make ship` was accepted by iOS
+  # (never released, so a new train may start at 1) and refused by macOS
+  # (released at build 7) — the same command, two answers.
+  build-number-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # stdlib-only; spaceship is stubbed in test/stubs/
+      - name: Run build number regression tests
+        run: ruby test/build_number_test.rb
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in
