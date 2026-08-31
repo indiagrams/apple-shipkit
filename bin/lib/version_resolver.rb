@@ -80,14 +80,52 @@ module Bootstrap
       raise "Bootstrap::Version: could not read MARKETING_VERSION from #{PROJECT_YML} or #{PROJECT_SWIFT} (cwd=#{repo_root})"
     end
 
-    # Returns the next CFBundleVersion to use for `marketing_version`.
-    # Queries ASC for all builds at this marketing version and returns
-    # max(build_number) + 1. Returns 1 when ASC has no prior builds.
+    # Returns the next CFBundleVersion to use.
+    #
+    # Queries ASC for EVERY build of the app — deliberately not just those at
+    # `marketing_version` — and returns max(build_number) + 1.
+    #
+    # WHY NOT SCOPED TO THE MARKETING VERSION
+    #
+    # It was, and that is wrong the moment anything has been released. Apple
+    # requires CFBundleVersion to exceed what was previously uploaded for that
+    # platform, and once a version is live that comparison spans the app's whole
+    # history, not the current train. Scoping to the marketing version means a
+    # bump resets the count to 1 and the upload is refused:
+    #
+    #     This bundle is invalid. The value for key CFBundleVersion [1] in the
+    #     Info.plist file must contain a higher version than that of the
+    #     previously uploaded version [7]
+    #
+    # Observed downstream: after releasing 0.1.0 (build 7) and bumping to 0.1.1,
+    # the resolver returned 1. iOS accepted it — its 0.1.0 had never been
+    # released, so a new train may start at 1 — and macOS refused it, in the same
+    # `make ship`. One command, two platforms, two answers, and the difference
+    # was release status rather than anything about the build.
+    #
+    # A global max is correct in both cases: it is always greater than anything
+    # uploaded, for either platform, in any train. It does NOT change which
+    # TestFlight bucket a build lands in — that is CFBundleShortVersionString,
+    # which is unaffected.
+    #
+    # `marketing_version` is retained in the signature for callers and for the
+    # RELEASE_BUILD_NUMBER override path; it no longer filters the query.
     #
     # Caller must have called Bootstrap.ensure_asc_token! first.
     #
     # bundle_id is treated as authoritative. If ASC has no App record
     # for it, returns 1 — the first ship of a fresh app.
+    # The arithmetic half of `next_build_number`, split out so it is testable
+    # without an App Store Connect account. Takes CFBundleVersion strings as ASC
+    # returns them and yields the next number to use.
+    #
+    # Non-numeric and empty entries coerce to 0 rather than raising: a build
+    # whose version cannot be parsed must not be able to drag the next number
+    # DOWN, and must not crash a release either.
+    def self.next_build_after(version_strings)
+      (Array(version_strings).map { |v| v.to_s.to_i }.max || 0) + 1
+    end
+
     def self.next_build_number(bundle_id, marketing_version)
       return ENV["RELEASE_BUILD_NUMBER"].to_i unless ENV["RELEASE_BUILD_NUMBER"].to_s.strip.empty?
 
@@ -96,19 +134,18 @@ module Bootstrap
 
       builds = Spaceship::ConnectAPI::Build.all(
         app_id: app.id,
-        version: marketing_version,
         sort: "-uploadedDate",
         limit: 200,
       )
 
-      # Spaceship's `version:` filter targets CFBundleShortVersionString
-      # (= app_version on the Build resource); `b.version` on the Build
-      # resource is CFBundleVersion (the build number). Both iOS and
-      # macOS uploads of the same marketing version share the bucket;
-      # they get separate Build records with potentially-equal
-      # CFBundleVersion values, so dedupe by integer value.
-      max_build = builds.map { |b| b.version.to_i }.max || 0
-      max_build + 1
+      # `b.version` on the Build resource is CFBundleVersion (the build number);
+      # CFBundleShortVersionString is `app_version`. Both iOS and macOS uploads
+      # get separate Build records with potentially-equal CFBundleVersion
+      # values, so this maxes by integer value rather than counting records.
+      #
+      # Integer max, not a sort: ASC returns versions as strings, and "10"
+      # sorts below "9" lexicographically.
+      next_build_after(builds.map(&:version))
     rescue Spaceship::AccessForbiddenError, Spaceship::UnauthorizedAccessError => e
       # Apple gates the whole ASC API behind an in-effect agreement; when it
       # lapses, surface the actionable runbook instead of a raw denial.
