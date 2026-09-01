@@ -834,7 +834,35 @@ end
 desc "Register App ID in Apple Developer Portal (idempotent)"
 desc "Run once locally before the first ship. ASC app record (TestFlight side)"
 desc "is verified separately via the bootstrap_asc lane."
-lane :register_app_id do
+desc "platform: ios (default) | macos, or set BUNDLE_ID_PLATFORM."
+lane :register_app_id do |options|
+  # An App ID carries its platform from the moment it is created, and
+  # BundleIdCreateRequest requires the field — there is no "unset" to fall
+  # back to. So resolve and validate it here, before authenticating, and let
+  # a typo fail immediately rather than after a round trip to Apple.
+  #
+  # BundleIdPlatform exposes exactly IOS and MAC_OS — re-read in the locked
+  # fastlane 2.238.0 on 2026-09-01 at
+  # spaceship/lib/spaceship/connect_api.rb:126-130. Apple's own API
+  # additionally defines UNIVERSAL, which spaceship does not surface, so a
+  # single App ID covering both platforms cannot be requested from here.
+  #
+  # Registering the macOS bundle ID used to be left to match's
+  # --platform macos path; match-based signing was dropped in v1.6 (#158),
+  # so nothing registers a macOS App ID as a side effect any more. Passing
+  # `platform:macos` is now the only way to get one.
+  platform_input = (options[:platform] || ENV["BUNDLE_ID_PLATFORM"] || "ios").to_s.strip.downcase
+  bundle_id_platform =
+    case platform_input
+    when "ios"   then Spaceship::ConnectAPI::BundleIdPlatform::IOS
+    when "macos" then Spaceship::ConnectAPI::BundleIdPlatform::MAC_OS
+    else
+      UI.user_error!(
+        "register_app_id: unknown platform #{platform_input.inspect}. " \
+        "Accepted values are 'ios' and 'macos'."
+      )
+    end
+
   asc_api_key  # sets Spaceship::ConnectAPI.token globally
 
   bundle_id_str = APP_IDENTIFIER
@@ -844,17 +872,24 @@ lane :register_app_id do
 
   if existing
     UI.success("App ID #{bundle_id_str} already registered (id=#{existing.id}, platform=#{existing.platform})")
+    if existing.platform != bundle_id_platform
+      # The lookup filters on identifier alone, which is what makes re-running
+      # this lane safe. It also means an existing App ID is reported as a hit
+      # even when it was registered for the other platform — say so, rather
+      # than letting "already registered" imply the requested platform.
+      UI.important(
+        "App ID #{bundle_id_str} is registered for #{existing.platform}, not the requested " \
+        "#{bundle_id_platform}. An App ID's platform cannot be changed after creation; a " \
+        "separate bundle ID is needed for #{bundle_id_platform}."
+      )
+    end
   else
-    # platform: IOS — match's --platform macos path will register the
-    # macOS bundle ID separately when generating the macOS provisioning
-    # profile. (BundleIdPlatform::UNIVERSAL is not exposed by spaceship
-    # in fastlane 2.230 even though Apple's API supports it.)
     created = Spaceship::ConnectAPI::BundleId.create(
       name:       bundle_name,
       identifier: bundle_id_str,
-      platform:   Spaceship::ConnectAPI::BundleIdPlatform::IOS,
+      platform:   bundle_id_platform,
     )
-    UI.success("App ID #{bundle_id_str} registered: id=#{created.id} (IOS)")
+    UI.success("App ID #{bundle_id_str} registered: id=#{created.id} (#{bundle_id_platform})")
   end
 end
 
