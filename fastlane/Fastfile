@@ -847,6 +847,16 @@ lane :register_app_id do |options|
   # additionally defines UNIVERSAL, which spaceship does not surface, so a
   # single App ID covering both platforms cannot be requested from here.
   #
+  # Apple can nonetheless *return* UNIVERSAL. On one team in 2026-09, all three
+  # App IDs read back from GET /v1/bundleIds as UNIVERSAL — including one
+  # created years earlier, and the two created minutes before by this lane with
+  # IOS and MAC_OS respectively. Whether Apple ignores the requested platform at
+  # create time or accepts it and normalises the record afterwards cannot be
+  # told apart from a read-back, and settling it would cost a third App ID that
+  # can never be reclaimed once used. So this lane reports what Apple returned
+  # alongside what was asked for, and claims to know neither which of the two
+  # happened nor how widely it applies.
+  #
   # Registering the macOS bundle ID used to be left to match's
   # --platform macos path; match-based signing was dropped in v1.6 (#158),
   # so nothing registers a macOS App ID as a side effect any more. Passing
@@ -872,7 +882,17 @@ lane :register_app_id do |options|
 
   if existing
     UI.success("App ID #{bundle_id_str} already registered (id=#{existing.id}, platform=#{existing.platform})")
-    if existing.platform != bundle_id_platform
+    if existing.platform.to_s == "UNIVERSAL"
+      # UNIVERSAL covers every platform, so it is not a mismatch with a request
+      # for one of them, and it emphatically does not call for a second bundle
+      # identifier. Saying otherwise would send a reader to burn an identifier
+      # that cannot be reclaimed, over a difference that costs them nothing.
+      UI.message(
+        "App ID #{bundle_id_str} is reported by Apple as UNIVERSAL rather than the requested " \
+        "#{bundle_id_platform}. UNIVERSAL covers every platform, so this App ID already serves " \
+        "#{bundle_id_platform} — no second bundle identifier is needed."
+      )
+    elsif existing.platform != bundle_id_platform
       # The lookup filters on identifier alone, which is what makes re-running
       # this lane safe. It also means an existing App ID is reported as a hit
       # even when it was registered for the other platform — say so, rather
@@ -889,7 +909,13 @@ lane :register_app_id do |options|
       identifier: bundle_id_str,
       platform:   bundle_id_platform,
     )
-    UI.success("App ID #{bundle_id_str} registered: id=#{created.id} (#{bundle_id_platform})")
+    # Report Apple's answer, not the request. The previous line printed the
+    # requested platform, which reads as confirmation of something nobody
+    # checked — and against a team where Apple returns UNIVERSAL, it is wrong.
+    UI.success(
+      "App ID #{bundle_id_str} registered: id=#{created.id} " \
+      "(requested #{bundle_id_platform}, Apple returned #{created.platform})"
+    )
   end
 end
 
