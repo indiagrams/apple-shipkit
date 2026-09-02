@@ -88,7 +88,7 @@ The five-command journey hides:
 ### Fork extensibility (added 2026-05; v1.6.1)
 - **`fastlane/Fastfile.local` extension point** — forks add custom lanes (Slack hook, Crashlytics dSYM upload, Firebase App Distribution, internal-ticket bumps) in a fork-owned file that survives upstream syncs. Template Fastfile imports it at EOF; `after_all` and `error` are reserved for forks, `before_all` is template-claimed. See [`fastlane/Fastfile.local.example`](fastlane/Fastfile.local.example) for seven copy-pasteable patterns.
 - **Env-driven Fastfile constants** — `APP_NAME`, `APP_IDENTIFIER`, and downstream `IOS_SCHEME` / `MACOS_SCHEME` / `IPA_NAME_PATTERN` / `PKG_NAME_PATTERN` all resolve from `.bootstrap.env` at lane-resolution time, with `ENV` override for CI. Forks no longer sed-substitute Fastfile literals during rename; the file stays byte-equivalent across template and every fork.
-- **Env-driven `pr.yml`** — workflow's `xcodebuild -project / -scheme` arguments resolve `${{ vars.APP_NAME || 'HelloApp' }}`. Forks set repo `vars.APP_NAME` once; the workflow file stays byte-equivalent across template and forks for safe `cp`-mirror.
+- **Constant project structure, identity in one xcconfig** — `pr.yml`, `ci/local-check.sh`, the Snapfiles and the Fastfile spell `app/App.xcodeproj` and `App-iOS` / `App-macOS` outright; nothing resolves a project path from a variable. The app's bundle id, product name, display name and copyright live in `app/Identity.xcconfig`, and the Team ID in gitignored `app/Local.xcconfig`. The workflow file stays byte-equivalent across template and forks for safe `cp`-mirror.
 - **Fork-friendly CI timeouts** — `pr.yml` job-level cap 60min (was 15); test steps inherit the job cap so a fork's 30-min test suite doesn't hit a template-tuned ceiling. Infrastructure-only steps (build, simulator pre-boot) keep tight bounds so stuck infrastructure fails fast without constraining user test duration.
 - **Single Sat 07:00 UTC canary cron** in [`canary-trigger.yml`](.github/workflows/canary-trigger.yml) — orchestrates three sequential ships (CI xcodegen → CI tuist → local-mode). Forks inherit no cron (the trigger file is template-only); each fork wires its own schedule when ready.
 
@@ -186,7 +186,7 @@ Each step is its own fastlane lane in `fastlane/Fastfile`. Read the file — it'
 │   ├── verify-testflight.rb     # `make verify` driver
 │   ├── adopt.rb                 # `make adopt` driver (existing-app forks)
 │   ├── lib/bootstrap.rb         # the orchestration framework (18-step pipeline)
-│   ├── rename.sh                # rename HelloApp → YourApp
+│   ├── rename.sh                # write your identity into app/Identity.xcconfig (+ docs, metadata)
 │   ├── switch-to-tuist.sh       # one-way XcodeGen → Tuist switch
 │   ├── setup-github.sh          # branch protection + squash-only + required checks
 │   ├── preflight.sh             # check developer-tool prerequisites

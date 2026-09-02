@@ -198,7 +198,7 @@ The direct `submit_for_review` lanes always submit (preserving existing fastlane
 Each time you add a new capability to your Bundle ID:
 
 1. Enable it in Apple Developer Portal → Identifiers → your Bundle ID.
-2. Add it to your `.entitlements` files in the repo (`app/iOS/HelloApp.entitlements`, `app/macOS/HelloApp.entitlements`).
+2. Add it to your `.entitlements` files in the repo (`app/iOS/App.entitlements`, `app/macOS/App.entitlements` — constant paths on every fork).
 3. Re-ship via `make ship`. The next mint cycle will produce certs/profiles that include the new capability.
 
 If you re-ship without enabling the capability in the portal first, signing succeeds but the entitlement is stripped from the binary and your feature won't work at runtime.

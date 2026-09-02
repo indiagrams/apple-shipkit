@@ -88,6 +88,16 @@ jobs:
           echo "Resolved matrix:"
           echo "$matrix" | jq .
 
+      # Every `app (…)` cell below `needs:` this job, so one plain-text run
+      # here gates both generators and all platforms. It has to live outside
+      # the cells: XcodeGen runs the same script through project.yml's
+      # preGenCommand, but Tuist has no pre-generation hook and a guard in
+      # Project.swift is skipped whenever the manifest cache is warm — so a
+      # missing identity key would otherwise generate a project with an empty
+      # CFBundleIdentifier on the Tuist cells and exit 0 doing it.
+      - name: identity preflight
+        run: bash ci/check-identity.sh
+
   # Lints all Swift sources against .swiftlint.yml at the repo root.
   # `--strict` treats warnings as errors so the signal is binary.
   # Excluded paths (Tuist Derived, fastlane SnapshotHelper, build outputs)
@@ -182,7 +192,7 @@ jobs:
       # Tuist forks live with their app/Project.swift manifest checked in
       # alongside app/project.yml. switch-to-tuist.sh stages the right one
       # (deletes project.yml, keeps Project.swift) so the subsequent
-      # `tuist generate` produces the same ${APP_NAME}.xcodeproj layout the
+      # `tuist generate` produces the same app/App.xcodeproj layout the
       # xcodegen path produces from project.yml.
       - name: switch fork to Tuist
         if: matrix.generator == 'tuist'
@@ -246,8 +256,8 @@ jobs:
           # -derivedDataPath so the next step knows where the .app landed;
           # without it the product is somewhere under a hashed DerivedData dir.
           xcodebuild build \
-            -project "app/${{ vars.APP_NAME || 'HelloApp' }}.xcodeproj" \
-            -scheme "${{ vars.APP_NAME || 'HelloApp' }}-iOS" \
+            -project app/App.xcodeproj \
+            -scheme App-iOS \
             -configuration Debug \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -279,13 +289,15 @@ jobs:
           set -o pipefail
           # `xcodebuild test` runs the scheme's Test action, which the
           # generator manifest (app/project.yml or app/Project.swift) wires
-          # to <APP_NAME>UITests + <APP_NAME>Tests (these are renamed at fork creation
-          # by bin/rename.sh — the literal names in apple-shipkit are HelloAppUITests
-          # + HelloAppTests). Test action requires a concrete simulator destination
-          # (generic/* doesn't work).
+          # to AppUITests + AppTests. The project path and scheme are
+          # constants — the app's identity lives in app/Identity.xcconfig and
+          # nothing here has to resolve it, so there is no repository variable
+          # to set and no fallback to mis-resolve on a renamed fork. Test
+          # action requires a concrete simulator destination (generic/*
+          # doesn't work).
           xcodebuild test \
-            -project "app/${{ vars.APP_NAME || 'HelloApp' }}.xcodeproj" \
-            -scheme "${{ vars.APP_NAME || 'HelloApp' }}-iOS" \
+            -project app/App.xcodeproj \
+            -scheme App-iOS \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
@@ -301,8 +313,8 @@ jobs:
           # macOS test destination is bare `platform=macOS` — `xcodebuild
           # test` doesn't accept `generic/platform=macOS`.
           xcodebuild test \
-            -project "app/${{ vars.APP_NAME || 'HelloApp' }}.xcodeproj" \
-            -scheme "${{ vars.APP_NAME || 'HelloApp' }}-macOS" \
+            -project app/App.xcodeproj \
+            -scheme App-macOS \
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY="" \

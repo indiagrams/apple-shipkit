@@ -1,0 +1,48 @@
+// app/Identity.xcconfig — the single tracked source of the app's identity.
+//
+// Editing the four values below rebrands the app on both platforms. XcodeGen
+// (configFiles:), Tuist (.settings(configurations:)) and xcodebuild all read
+// this file natively — there is no parser in between, which is what lets
+// `xcodebuild -showBuildSettings` report these resolved values directly.
+// bin/preflight-identity.rb refuses to generate a project if any of the four
+// is missing or empty, and names the variable.
+//
+// The project's STRUCTURE — app/App.xcodeproj, the App-iOS / App-macOS
+// schemes, the App*Tests targets, App.entitlements — is a constant and is
+// not configured here. Scripts and workflows spell the constant; nothing
+// derives a path from a value in this file.
+//
+// Format rules: values are UNQUOTED (quotes would land in the plist as
+// literal characters); comments are `//`; the `#` below is a directive, not
+// a comment.
+
+// Feeds PRODUCT_BUNDLE_IDENTIFIER on both app targets (one shared bundle id).
+// The four test bundles derive theirs from this value with a fixed suffix.
+BUNDLE_ID        = com.example.helloapp
+
+// Feeds PRODUCT_NAME on the two APP targets only, through a per-target
+// PRODUCT_NAME = $(APP_PRODUCT_NAME) in each manifest. Deliberately NOT a
+// bare PRODUCT_NAME: a project-level PRODUCT_NAME leaks into every target —
+// all four test bundles would take this name and the two iOS ones would
+// collide at one path under Build/Products/. Tuist writes a per-target
+// PRODUCT_NAME, so a bare one would also make the two generators disagree.
+APP_PRODUCT_NAME = HelloApp
+
+// Feeds CFBundleDisplayName — the name under the icon — on both platforms.
+DISPLAY_NAME     = HelloApp
+
+// Feeds NSHumanReadableCopyright — the Info.plist key, set directly in both
+// manifests' plist blocks — on both platforms. Not through an INFOPLIST_KEY_*
+// build setting: that reaches the bundle only under GENERATE_INFOPLIST_FILE =
+// YES, which the app targets do not set (observed: the setting resolved in
+// -showBuildSettings, the built iOS plist had no key). The © is U+00A9.
+COPYRIGHT        = TODO Copyright © <year> <Your Org>. All rights reserved.
+
+// The Apple Team ID (DEVELOPMENT_TEAM) lives in app/Local.xcconfig, which is
+// gitignored and never tracked. `bin/rename.sh --team-id=…` writes it; so does
+// `make bootstrap-fork`. On a clone without that file the include below is
+// silent and DEVELOPMENT_TEAM is undefined — not empty, undefined: no line for
+// it appears in -showBuildSettings at all, and Xcode's own message on macOS is
+// nothing (the build succeeds ad-hoc signed). The named failure comes from
+// `bin/preflight-identity.rb --require-team`, not from the build.
+#include? "Local.xcconfig"

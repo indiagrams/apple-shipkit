@@ -75,7 +75,7 @@ help:
 	@echo "  check-ios        iOS device build (primary signal)"
 	@echo "  check-sim        iOS Simulator build (backup signal)"
 	@echo "  check-macos      macOS build"
-	@echo "  generate         Regenerate HelloApp.xcodeproj from app/project.yml"
+	@echo "  generate         Regenerate app/App.xcodeproj from app/project.yml"
 	@echo "  icons            Regenerate macOS AppIcon.iconset + AppIcon.icns from 1024 source"
 	@echo "  screenshots      Capture App Store screenshots (iOS + macOS) to fastlane/screenshots/"
 	@echo "  release-dryrun   fastlane release tag:v0.0.0 skip_upload:true skip_tag:true"

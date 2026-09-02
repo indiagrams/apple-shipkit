@@ -148,9 +148,9 @@ ok "second run was silent no-op (exit 0; status unchanged; stdout empty)"
 step "Integration: tuist generate --no-open on switched tree"
 ( cd "$WORK_DIR/app" && tuist generate --no-open >/dev/null 2>&1 ) || \
   fail "tuist generate failed on switched tree"
-test -d "$WORK_DIR/app/HelloApp.xcodeproj" || \
-  fail "tuist generate did not produce app/HelloApp.xcodeproj"
-ok "tuist generate produces app/HelloApp.xcodeproj"
+test -d "$WORK_DIR/app/App.xcodeproj" || \
+  fail "tuist generate did not produce app/App.xcodeproj"
+ok "tuist generate produces app/App.xcodeproj"
 
 # ── Integration: make check green on the switched tree ────────────────────
 step "Integration: make check (iOS device build) on switched tree"

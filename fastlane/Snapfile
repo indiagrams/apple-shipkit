@@ -20,8 +20,8 @@ devices([
 
 languages(["en-US"])
 
-project("app/HelloApp.xcodeproj")
-scheme("HelloApp-iOS")
+project("app/App.xcodeproj")
+scheme("App-iOS")
 configuration("Debug")
 
 output_directory("./fastlane/screenshots")

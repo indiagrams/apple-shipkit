@@ -1,7 +1,7 @@
 import XCTest
 
 // `AccessibilityIdentifiers` (app/Shared/AccessibilityIdentifiers.swift)
-// is compiled into BOTH the main app target (HelloApp-iOS) and this UI test
+// is compiled into BOTH the main app target (App-iOS) and this UI test
 // target via xcodegen's / Tuist's `sources:` list — same file path, two
 // targets. UI tests run as a separate process and can't link the main
 // app's binary, so the usual `@testable import` pattern doesn't apply.
@@ -18,7 +18,7 @@ import XCTest
 ///   - Parallel: light and dark can run on different simulators simultaneously.
 ///   - Independent failure: if dark breaks, light still captures.
 ///   - Independent re-run: `fastlane snapshot --only_testing
-///     HelloAppUITests/AppStoreScreenshotTests/testLightMode` when iterating.
+///     AppUITests/AppStoreScreenshotTests/testLightMode` when iterating.
 ///
 /// **Selector contract.** Never query by visible text — see
 /// `AccessibilityIdentifiers.swift`. The constants there are the
@@ -53,7 +53,7 @@ final class AppStoreScreenshotTests: XCTestCase {
         // the setter waits for springboard confirmation, and on freshly-booted
         // simulators that handshake can timeout, failing the test with
         // "Failed to set appearance mode: Timed out while setting appearance
-        // mode to Light"). HelloAppMain reads `-UITestColorScheme` at App
+        // mode to Light"). AppMain reads `-UITestColorScheme` at App
         // init and applies `.preferredColorScheme(...)` to its WindowGroup,
         // bypassing the system appearance API entirely.
         let scheme = (appearance == .dark) ? "dark" : "light"

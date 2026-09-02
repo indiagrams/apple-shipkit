@@ -214,8 +214,8 @@ mutate_makefile() {
   # 2 occurrences: bootstrap target + generate target.
   # `cd app && xcodegen generate` → `cd app && tuist generate --no-open`
   sed -i '' 's|cd app && xcodegen generate|cd app \&\& tuist generate --no-open|g' Makefile
-  # Help line: "Regenerate HelloApp.xcodeproj from app/project.yml"
-  sed -i '' 's|Regenerate HelloApp.xcodeproj from app/project.yml|Regenerate HelloApp.xcodeproj from app/Project.swift|g' Makefile
+  # Help line: "Regenerate app/App.xcodeproj from app/project.yml"
+  sed -i '' 's|Regenerate app/App.xcodeproj from app/project.yml|Regenerate app/App.xcodeproj from app/Project.swift|g' Makefile
   ok "Makefile: xcodegen generate → tuist generate --no-open"
 }
 

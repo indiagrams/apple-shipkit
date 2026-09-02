@@ -137,9 +137,14 @@ SCHEME_MACOS=$(echo "$SCHEMES" | grep -E -- '-macOS$' | head -1)
 ok "iOS scheme:   $SCHEME_IOS"
 ok "macOS scheme: $SCHEME_MACOS"
 
-# APP_NAME prefix (e.g. "HelloApp" from "HelloApp-iOS")
-APP_NAME="${SCHEME_IOS%-iOS}"
-ok "app name prefix: $APP_NAME"
+# The running process is named after PRODUCT_NAME, which resolves from
+# app/Identity.xcconfig (APP_PRODUCT_NAME) — NOT after the scheme, whose
+# prefix is the constant "App". Read it from the resolved build settings.
+APP_NAME=$(xcodebuild -showBuildSettings -project "$PROJECT" -scheme "$SCHEME_MACOS" \
+  -destination "platform=macOS" 2>/dev/null \
+  | awk -F' = ' '/^[[:space:]]*PRODUCT_NAME = / {print $2; exit}' | tr -d ' \n')
+[ -n "$APP_NAME" ] || fail "could not detect PRODUCT_NAME from $PROJECT ($SCHEME_MACOS)"
+ok "product name: $APP_NAME"
 
 # Bundle ID from build settings (uses iOS scheme; iOS+macOS share PRODUCT_BUNDLE_IDENTIFIER per project.yml)
 BUNDLE_ID=$(xcodebuild -showBuildSettings -project "$PROJECT" -scheme "$SCHEME_IOS" \
@@ -192,8 +197,8 @@ fi
 
 step "Build $SCHEME_MACOS (ad-hoc signing for sandbox bypass)"
 # CODE_SIGN_IDENTITY="-" = ad-hoc signing — satisfies macOS sandbox requirement
-# without needing a real Apple Development team. Bypasses the
-# TEAM_ID_PLACEHOLDER blocker that ships with this template.
+# without needing a real Apple Development team, so this works on a clone
+# that has no app/Local.xcconfig (no DEVELOPMENT_TEAM) yet.
 if ! xcodebuild build -project "$PROJECT" -scheme "$SCHEME_MACOS" \
        -destination "platform=macOS" -configuration Debug \
        CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" 2>&1 | tail -5 \
@@ -212,9 +217,8 @@ open "$APP_MACOS"
 sleep 3   # window-render + AppKit launch settle
 
 # Quartz query — bypasses Accessibility permission
-# kCGWindowOwnerName is the truncated process name (e.g. "HelloApp", NOT
-# "HelloApp-macOS") because PRODUCT_NAME drops the platform suffix. Match by
-# APP_NAME prefix to handle this consistently.
+# kCGWindowOwnerName is the process name, i.e. PRODUCT_NAME (APP_PRODUCT_NAME
+# from app/Identity.xcconfig) — not the scheme name. Match by that prefix.
 WID=$(python3 - <<EOF
 from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
 for w in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID):
