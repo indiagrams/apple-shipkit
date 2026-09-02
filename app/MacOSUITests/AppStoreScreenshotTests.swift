@@ -45,7 +45,7 @@ final class AppStoreScreenshotTests: XCTestCase {
         // The screenshot test exists for `make screenshots` (run locally or
         // via a GUI-capable runner), not for CI smoke validation — the
         // `app (macOS)` matrix cells in pr.yml already get compile-coverage
-        // of this file, plus runtime coverage of `HelloAppMacOSTests` (the
+        // of this file, plus runtime coverage of `AppMacOSTests` (the
         // non-UI unit test) via the same `xcodebuild test` invocation. Skip
         // here with XCTSkip so xcodebuild exits 0; locally the test runs in
         // full.

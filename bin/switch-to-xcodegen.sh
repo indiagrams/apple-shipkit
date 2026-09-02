@@ -192,30 +192,19 @@ mutate_restore_project_yml() {
   fi
   git show "$PROJECT_YML_SHA:app/project.yml" > app/project.yml
 
-  # On a renamed fork, the most recent project.yml in git history is the
-  # un-renamed upstream template — because bin/rename.sh + bin/switch-to-
-  # tuist.sh ran as one commit that DELETED project.yml (filtered out by
-  # --diff-filter=AM). The restored content carries HelloApp identity +
-  # TEAM_ID_PLACEHOLDER + com.example.helloapp, which then breaks every
-  # xcodebuild invocation (No signing certificate "...TEAM_ID_PLACEHOLDER",
-  # CODE_SIGN_ENTITLEMENTS references non-existent HelloApp.entitlements,
-  # etc.). Re-apply the fork's identity from .bootstrap.env, mirroring
-  # what bin/rename.sh would have done.
-  if [ -f .bootstrap.env ]; then
-    local restored_name fork_name fork_bundle fork_team
-    restored_name=$(awk '/^name:[[:space:]]+/{print $2; exit}' app/project.yml)
-    fork_name=$(grep '^APP_NAME=' .bootstrap.env 2>/dev/null | head -1 | cut -d= -f2 | awk '{print $1}')
-    fork_bundle=$(grep '^BUNDLE_ID=' .bootstrap.env 2>/dev/null | head -1 | cut -d= -f2 | awk '{print $1}')
-    fork_team=$(grep '^FASTLANE_TEAM_ID=' .bootstrap.env 2>/dev/null | head -1 | cut -d= -f2 | awk '{print $1}')
-    if [ -n "$fork_name" ] && [ -n "$restored_name" ] && [ "$fork_name" != "$restored_name" ]; then
-      step "Re-applying fork identity to restored project.yml ($restored_name → $fork_name)"
-      # APP_NAME: name field, target names, entitlements file refs, scheme refs.
-      sed -i '' "s|${restored_name}|${fork_name}|g" app/project.yml
-      [ -n "$fork_team" ]   && sed -i '' "s|TEAM_ID_PLACEHOLDER|${fork_team}|g" app/project.yml
-      [ -n "$fork_bundle" ] && sed -i '' "s|com\.example\.helloapp|${fork_bundle}|g" app/project.yml
-      ok "Re-applied fork identity (APP_NAME=$fork_name, TEAM=$fork_team, BUNDLE=$fork_bundle)"
-    fi
+  # The restored manifest carries no identity: the project name, targets,
+  # schemes and entitlements paths are the constant `App`, and the bundle id,
+  # product name, display name and copyright are $(VAR) references into
+  # app/Identity.xcconfig, which this switch never touches. There is nothing
+  # to re-apply. (This script used to sed the fork's APP_NAME, Team ID and
+  # bundle id back into a restored pre-identity-xcconfig manifest; that put
+  # the Team ID into a tracked file.) The one restored shape that cannot
+  # build is a manifest from BEFORE the identity xcconfig existed — refuse
+  # it rather than patch it.
+  if grep -q 'TEAM_ID_PLACEHOLDER' app/project.yml || ! grep -q '^name: App$' app/project.yml; then
+    fail "restored app/project.yml ($PROJECT_YML_SHA) predates app/Identity.xcconfig — restore from a commit after the identity xcconfig landed, or copy app/project.yml from the template"
   fi
+  ok "restored app/project.yml carries no identity (name: App; identity resolves from app/Identity.xcconfig)"
 
   git add app/project.yml
   ok "app/project.yml restored from $PROJECT_YML_SHA"
@@ -247,7 +236,7 @@ mutate_makefile() {
     fail "Makefile missing — unexpected repo state"
   fi
   sed -i '' 's|cd app && tuist generate --no-open|cd app \&\& xcodegen generate|g' Makefile
-  sed -i '' 's|Regenerate HelloApp.xcodeproj from app/Project.swift|Regenerate HelloApp.xcodeproj from app/project.yml|g' Makefile
+  sed -i '' 's|Regenerate app/App.xcodeproj from app/Project.swift|Regenerate app/App.xcodeproj from app/project.yml|g' Makefile
   ok "Makefile: tuist generate --no-open → xcodegen generate"
 }
 

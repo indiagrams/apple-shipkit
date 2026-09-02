@@ -64,9 +64,13 @@ end
 #      defaults; if a real ship hits these, the cert / bundle-id lookups
 #      against Apple will surface "not registered" immediately.
 #
-# All other Fastfile constants (IOS_SCHEME, MACOS_SCHEME, IPA_NAME_PATTERN,
-# PKG_NAME_PATTERN, bundle_name) are computed from APP_NAME. Forks no longer
-# need bin/rename.sh to sed-substitute Fastfile literals.
+# IOS_SCHEME, MACOS_SCHEME, IPA_NAME_PATTERN and PKG_NAME_PATTERN are NOT
+# derived from APP_NAME: the project structure (app/App.xcodeproj, the
+# App-iOS / App-macOS schemes, build/App-<version>.ipa) is a constant shared
+# by the template and every fork, and only the app's identity — read by the
+# build from app/Identity.xcconfig — differs. ci/local-release-check.sh spells
+# the same constants. bundle_name still uses APP_NAME (it names the App ID
+# at Apple, which is identity, not structure).
 
 def _fork_config
   bootstrap_env = File.join(File.dirname(__FILE__), "..", ".bootstrap.env")
@@ -87,10 +91,10 @@ _FORK_CONFIG       = _fork_config
 
 APP_NAME           = ENV["APP_NAME"]  || _FORK_CONFIG["APP_NAME"]  || "HelloApp"
 APP_IDENTIFIER     = ENV["BUNDLE_ID"] || _FORK_CONFIG["BUNDLE_ID"] || "com.example.helloapp"
-IOS_SCHEME         = "#{APP_NAME}-iOS"
-MACOS_SCHEME       = "#{APP_NAME}-macOS"
-IPA_NAME_PATTERN   = "#{APP_NAME}-%s.ipa"   # printf with version
-PKG_NAME_PATTERN   = "#{APP_NAME}-%s.pkg"
+IOS_SCHEME         = "App-iOS"
+MACOS_SCHEME       = "App-macOS"
+IPA_NAME_PATTERN   = "App-%s.ipa"   # printf with version; written by ci/local-release-check.sh
+PKG_NAME_PATTERN   = "App-%s.pkg"
 
 def asc_api_key
   # Decode .p8 to a tmpfile and pass key_filepath instead of key_content +

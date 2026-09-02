@@ -93,9 +93,9 @@ This template uses Xcode 15+; you're already covered.
 The conventions below assume:
 
 - Bundle ID: `com.example.helloapp` (substitute yours)
-- Scheme: `HelloApp-iOS` / `HelloApp-macOS`
+- Scheme: `App-iOS` / `App-macOS` (constants — the app's name is `PRODUCT_NAME`, from `app/Identity.xcconfig`)
 - Team ID: read from `.bootstrap.env` as `FASTLANE_TEAM_ID` (set by `make init` + your edits)
-- Build artifacts: `build/HelloApp-<version>.ipa`, `build/HelloApp-<version>.pkg`
+- Build artifacts: `build/App-<version>.ipa`, `build/App-<version>.pkg`
 - ASC API key path: `~/.appstoreconnect/AuthKey_<KEYID>.p8` (per
   [`docs/APPLE-PREREQS.md`](APPLE-PREREQS.md))
 
@@ -123,11 +123,11 @@ TEAM_ID="$FASTLANE_TEAM_ID"
 ( cd app && xcodegen generate )
 
 WORK_DIR="$(mktemp -d)"
-IOS_ARCHIVE="$WORK_DIR/HelloApp-iOS.xcarchive"
+IOS_ARCHIVE="$WORK_DIR/App-iOS.xcarchive"
 
 xcodebuild archive \
-  -project app/HelloApp.xcodeproj \
-  -scheme HelloApp-iOS \
+  -project app/App.xcodeproj \
+  -scheme App-iOS \
   -configuration Release \
   -destination 'generic/platform=iOS' \
   -archivePath "$IOS_ARCHIVE" \
@@ -160,7 +160,7 @@ xcodebuild -exportArchive \
   -allowProvisioningUpdates
 
 IPA_SRC=$(find "$IOS_EXPORT" -maxdepth 2 -name "*.ipa" | head -1)
-IPA_DEST="build/HelloApp-${VERSION}.ipa"
+IPA_DEST="build/App-${VERSION}.ipa"
 cp "$IPA_SRC" "$IPA_DEST"
 shasum -a 256 "$IPA_DEST" | tee "$IPA_DEST.sha256"
 ```
@@ -290,11 +290,11 @@ between export and upload.
 ### 1. Archive
 
 ```bash
-MACOS_ARCHIVE="$WORK_DIR/HelloApp-macOS.xcarchive"
+MACOS_ARCHIVE="$WORK_DIR/App-macOS.xcarchive"
 
 xcodebuild archive \
-  -project app/HelloApp.xcodeproj \
-  -scheme HelloApp-macOS \
+  -project app/App.xcodeproj \
+  -scheme App-macOS \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$MACOS_ARCHIVE" \
@@ -351,7 +351,7 @@ INSTALLER_CERT=$(security find-identity -v -p basic 2>/dev/null \
   | grep -E "3rd Party Mac Developer Installer|Mac Installer Distribution" \
   | head -1 | grep -oE '"[^"]+"' | tr -d '"')
 
-PKG_DEST="build/HelloApp-${VERSION}.pkg"
+PKG_DEST="build/App-${VERSION}.pkg"
 productbuild --component "$EXPANDED_APP" /Applications \
   --sign "$INSTALLER_CERT" \
   --timestamp \

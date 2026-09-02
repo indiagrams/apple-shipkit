@@ -65,8 +65,8 @@ ensure_xcodeproj() {
 build_ios_device() {
   step "app: build iOS device"
   xcodebuild build \
-    -project app/HelloApp.xcodeproj \
-    -scheme HelloApp-iOS \
+    -project app/App.xcodeproj \
+    -scheme App-iOS \
     -configuration Debug \
     -sdk iphoneos \
     -destination 'generic/platform=iOS' \
@@ -79,8 +79,8 @@ build_ios_device() {
 build_ios_sim() {
   step "app: build iOS Simulator"
   xcodebuild build \
-    -project app/HelloApp.xcodeproj \
-    -scheme HelloApp-iOS \
+    -project app/App.xcodeproj \
+    -scheme App-iOS \
     -configuration Debug \
     -sdk iphonesimulator \
     -destination 'generic/platform=iOS Simulator' \
@@ -93,8 +93,8 @@ build_ios_sim() {
 build_macos() {
   step "app: build macOS"
   xcodebuild build \
-    -project app/HelloApp.xcodeproj \
-    -scheme HelloApp-macOS \
+    -project app/App.xcodeproj \
+    -scheme App-macOS \
     -configuration Debug \
     -destination 'generic/platform=macOS' \
     CODE_SIGN_IDENTITY="" \
@@ -105,6 +105,10 @@ build_macos() {
 
 step "preflight: shared release helpers in sync"
 verify_helpers_in_sync
+
+# Same check pr.yml's config job runs, so a hole in app/Identity.xcconfig is
+# named here before xcodegen would silently generate around it.
+ci/check-identity.sh || fail "app/Identity.xcconfig incomplete — see ci/check-identity.sh"
 
 case "$mode" in
   --fast)

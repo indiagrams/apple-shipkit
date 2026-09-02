@@ -180,6 +180,15 @@ This creates `https://github.com/<your-username>/my-cool-app`, copies the templa
 
 The template ships with a starter app called **HelloApp**. Time to make it yours.
 
+Where the name lives: the app's bundle id, product name, display name and
+copyright are the four values in `app/Identity.xcconfig`, which both project
+generators read directly. Everything else about the project — `app/App.xcodeproj`,
+the `App-iOS` / `App-macOS` schemes, `app/Shared/App.swift`, the entitlements
+files — is a constant that stays the same on every fork, so scripts and CI never
+have to work out what your app is called. The rename below writes your values
+into that xcconfig (and into the docs and App Store metadata); your Apple Team
+ID goes into the gitignored `app/Local.xcconfig` and is never committed.
+
 First, run the one-time dev-env setup. This installs the Ruby gems (fastlane et al.), Homebrew packages (xcodegen, lefthook, etc.), regenerates the Xcode project, and wires up the pre-push git hook. Takes ~30-90 seconds depending on what's already installed:
 
 ```bash

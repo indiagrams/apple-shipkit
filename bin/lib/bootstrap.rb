@@ -475,10 +475,13 @@ module Bootstrap
     def name; "Rename HelloApp → #{config['APP_NAME']}"; end
 
     def check
-      # Done iff: shared swift file exists AND no leftover HelloApp / com.example.helloapp
-      # references in source tree (excluding vendor, .git, .planning, build).
-      shared = REPO_ROOT.join("app", "Shared", "#{config['APP_NAME']}.swift")
-      shared.file? ? :done : :pending
+      # Done iff app/Identity.xcconfig already carries this fork's product name.
+      # The project structure (app/App.xcodeproj, app/Shared/App.swift, …) is a
+      # constant that the rename never touches; identity is what it writes.
+      identity = REPO_ROOT.join("app", "Identity.xcconfig")
+      return :pending unless identity.file?
+      text = identity.read(encoding: "UTF-8")
+      text.match?(/^\s*APP_PRODUCT_NAME\s*=\s*#{Regexp.escape(config['APP_NAME'])}\s*$/) ? :done : :pending
     end
 
     def do_it
@@ -603,8 +606,8 @@ module Bootstrap
     # shows which app+bundle triggered). They MUST be set for CI-mode
     # release.yml to compute the release tag (release.yml fails fast with
     # `vars.BUNDLE_ID is not set on this repo` if missing); pr.yml falls
-    # back to 'HelloApp' literals when unset, which won't match a renamed
-    # fork's scheme/xcodeproj — so PR CI also breaks silently without these.
+    # back to nothing. (pr.yml no longer reads them: its project path and
+    # schemes are the constant app/App.xcodeproj / App-iOS / App-macOS.)
     REQUIRED_VARIABLES = %w[APP_NAME BUNDLE_ID].freeze
 
     def name; "Set 5 GH Secrets + 2 GH Variables on app repo"; end

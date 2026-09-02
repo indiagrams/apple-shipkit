@@ -288,7 +288,7 @@ ok "post-rename --dry-run announces 'already-renamed'"
 
 # ── AC-21: .planning/ is not modified by the script ───────────────────────
 #
-# Per SPEC AC-21: ".planning/ and app/HelloApp.xcodeproj/ are not
+# Per SPEC AC-21: ".planning/ and app/App.xcodeproj/ are not
 # modified by the script." Defense-in-depth pathspec exclusion check —
 # drop a sentinel file into .planning/ before rename, assert it's
 # byte-identical after.
@@ -386,8 +386,9 @@ TD=$(fresh_clone)
     --email=test@acme.com --slug=test/myapp >/dev/null 2>&1 ) || \
   fail "REQ-10 setup: initial rename failed"
 ( cd "$TD" && git add -A && git commit --quiet -m "first rename" )
-# Corrupt state: move ONE renamed file back to its original name.
-( cd "$TD" && git mv app/Shared/MyApp.swift app/Shared/HelloApp.swift && \
+# Corrupt state: put ONE identity value back to the template placeholder
+# (the structure is a constant, so identity is the only rename signal).
+( cd "$TD" && sed -i '' 's|^\(BUNDLE_ID[[:space:]]*=[[:space:]]*\)com.acme.myapp$|\1com.example.helloapp|' app/Identity.xcconfig && \
     git commit --quiet -am "partial-rename corruption" )
 
 set +e
@@ -402,11 +403,9 @@ echo "$PR_OUT" | grep -q "partial-rename state detected" || \
 ok "partial-rename detected (exit $PR_EXIT) — restore-or-force guidance emitted"
 
 step "REQ-10 (MEDIUM-4): --force bypasses partial-rename gate"
-# Same TD as above. With --force, the partial-rename gate is bypassed.
-# The script then proceeds to git mv but the source file is missing
-# for one of the 3 pairs (we moved MyApp.swift back but the other two
-# were already renamed) — that's an EXPECTED downstream failure that
-# proves the bypass worked: control reached past the gate.
+# Same TD as above. With --force, the partial-rename gate is bypassed and
+# the script proceeds: the sweep re-substitutes the one value we put back
+# (BUNDLE_ID) and regen runs — control reached past the gate.
 set +e
 FB_OUT=$(cd "$TD" && bin/rename.sh MyApp com.acme.myapp "My App" \
   --email=test@acme.com --slug=test/myapp --force 2>&1)
@@ -450,45 +449,51 @@ FB_EXIT=$?
 set -e
 test "$FB_EXIT" -eq 0 || \
   fail "MEDIUM-4: feature branch + --force should succeed (got $FB_EXIT); output: $FB_OUT"
-test -d "$TD/app/MyApp.xcodeproj" || \
-  fail "MEDIUM-4: --force rename completed but app/MyApp.xcodeproj missing"
-ok "feature branch + --force succeeded (exit $FB_EXIT, xcodegen regen confirmed)"
+test -d "$TD/app/App.xcodeproj" || \
+  fail "MEDIUM-4: --force rename completed but app/App.xcodeproj missing (the project name is a constant)"
+grep -qE '^[[:space:]]*APP_PRODUCT_NAME[[:space:]]*=[[:space:]]*MyApp[[:space:]]*$' "$TD/app/Identity.xcconfig" || \
+  fail "MEDIUM-4: --force rename completed but app/Identity.xcconfig does not carry APP_PRODUCT_NAME = MyApp"
+ok "feature branch + --force succeeded (exit $FB_EXIT, app/App.xcodeproj regenerated, identity in the xcconfig)"
 
-# ── HelloAppApp scrub: G-01 closure verification (substring not whole-word) ─
+# ── HelloApp scrub: G-01 closure verification (substring not whole-word) ──
 #
 # G-01 closure changed Step F from `git grep -lw` to `git grep -l` so
-# `HelloApp` matches inside `HelloAppApp` (the SwiftUI @main struct).
-# This is the textbook "test rubber-stamped a defect" gap from
-# 01-VERIFICATION.md. Falsifiable: post-rename app/Shared/MyApp.swift
-# must NOT contain HelloAppApp; the SwiftUI @main struct should be
-# MyAppApp.
+# `HelloApp` matches as a substring (`HelloApp.title` in
+# AccessibilityIdentifiers.swift, `HelloAppTemplate`-style compounds).
+# Falsifiable: the @main struct is the constant `AppMain` and must be
+# untouched; the selector `HelloApp.title` must have become `MyApp.title`.
 
-step "G-01: HelloAppApp scrub (substring match in Step F broad sweep)"
+step "G-01: HelloApp scrub (substring match in Step F broad sweep)"
 TD=$(fresh_clone)
 ( cd "$TD" && bin/rename.sh MyApp com.acme.myapp "My App" \
     --email=test@acme.com --slug=test/myapp >/dev/null 2>&1 ) || \
   fail "G-01 setup: rename failed"
-# Falsifiable assertion: HelloAppApp must NOT be in MyApp.swift.
-if grep -qF "HelloAppApp" "$TD/app/Shared/MyApp.swift"; then
-  fail "G-01: app/Shared/MyApp.swift still contains 'HelloAppApp' — Step F broad sweep regression"
-fi
-# Positive assertion: MyAppApp must be in MyApp.swift (the @main struct).
-grep -qF "MyAppApp" "$TD/app/Shared/MyApp.swift" || \
-  fail "G-01: app/Shared/MyApp.swift missing 'MyAppApp' — substitution did not occur"
+# The structure is constant: App.swift still exists, still declares AppMain.
+test -f "$TD/app/Shared/App.swift" || fail "G-01: app/Shared/App.swift missing post-rename"
+grep -qF "struct AppMain: App" "$TD/app/Shared/App.swift" || \
+  fail "G-01: app/Shared/App.swift no longer declares 'struct AppMain: App' — the sweep must not touch the constant structure"
+# Substring assertion: the accessibility selector was swept.
+grep -qF '"MyApp.title"' "$TD/app/Shared/AccessibilityIdentifiers.swift" || \
+  fail "G-01: AccessibilityIdentifiers.swift missing 'MyApp.title' — substring substitution did not occur"
 # Repo-wide: zero HelloApp substring matches outside the standard exclusions.
 # M3 P3 cross-AI HIGH-2 part B closure (2026-04-30; SPEC carve-out):
 # extended with 2 new pathspec entries for the verify-rename
 # infrastructure files so this gate does not false-fail on them.
 # NARROW maintenance only — no other change to this gate.
+# Exclusions mirror bin/rename.sh's PATHSPEC_EXCLUSIONS and
+# bin/verify-rename.sh's list: bin/lib/bootstrap.rb and the upstream-only
+# matrix workflow keep their HelloApp literals by design (the orchestrator
+# stays self-describing; the workflow's repository guard survives).
 HITS=$(cd "$TD" && git grep -c -e HelloApp -- . \
-        ':!.planning' ':!LICENSE' ':!app/HelloApp.xcodeproj' \
+        ':!.planning' ':!LICENSE' ':!app/App.xcodeproj' \
         ':!bin/rename.sh' ':!ci/test-rename.sh' ':!ci/test-rename-gates.sh' \
         ':!bin/verify-rename.sh' ':!ci/test-verify-rename.sh' \
+        ':!bin/lib/bootstrap.rb' ':!.github/workflows/bootstrap-doctor-matrix.yml' \
         2>/dev/null \
         | awk -F: 'BEGIN{s=0} $2>0{s+=$2} END{print s}' || true)
 test "$HITS" = "0" || \
   fail "G-01: $HITS HelloApp substring matches remain post-rename (substring form, no -w)"
-ok "HelloAppApp scrubbed; MyAppApp present; 0 HelloApp substring hits repo-wide"
+ok "AppMain untouched; MyApp.title present; 0 HelloApp substring hits repo-wide"
 
 # ── Gate 5d: --generator validation (#38; PR 4) ───────────────────────────
 #

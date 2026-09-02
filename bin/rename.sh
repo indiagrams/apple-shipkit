@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # bin/rename.sh — fork-rename script for the apple-shipkit.
 #
-# Substitutes 5 identity surfaces + 1 derived value, renames file paths,
-# regenerates xcodeproj. Atomic (all-or-nothing via reset-hard rollback),
-# idempotent (silent no-op on re-run with same args), pre-flight-gated.
+# Substitutes 5 identity surfaces + 1 derived value and regenerates the
+# xcodeproj. Atomic (all-or-nothing via reset-hard rollback), idempotent
+# (silent no-op on re-run with same args), pre-flight-gated.
+#
+# The project STRUCTURE is a constant and is never renamed: app/App.xcodeproj,
+# the App-iOS / App-macOS schemes, app/Shared/App.swift, App.entitlements and
+# the App*Tests targets stay as they are on every fork. What this script
+# renames is the app's IDENTITY — the values in app/Identity.xcconfig
+# (bundle id, product name, display name) plus the docs, metadata and UI
+# strings that spell the same placeholders.
 #
 # Usage:
 #   bin/rename.sh APP_NAME BUNDLE_ID DISPLAY_NAME --email=EMAIL [--slug=OWNER/REPO] [--year=YYYY] [--generator=tuist|xcodegen] [--platforms=ios|macos|ios,macos] [--team-id=TEAMID] [--dry-run] [--force]
@@ -40,14 +47,15 @@
 #                       one drives the renamed fork. Pre-flight gate fails if
 #                       --generator=tuist and `tuist` is not on PATH.
 #   --team-id=TEAMID    Apple Developer team ID (10-char alphanumeric, e.g.
-#                       A1B2C3D4E5). Substitutes TEAM_ID_PLACEHOLDER in
-#                       app/project.yml + app/Project.swift so signed builds
-#                       (`make ship`, `make screenshots`, plain xcodebuild)
-#                       work without manual edits. Optional; if omitted, the
-#                       placeholder remains and rename-complete summary
-#                       warns. bin/bootstrap-fork.rb auto-fills from
-#                       .bootstrap.env's FASTLANE_TEAM_ID, so the
-#                       `make bootstrap-fork` path never leaves it unset.
+#                       A1B2C3D4E5). Written as DEVELOPMENT_TEAM into the
+#                       GITIGNORED app/Local.xcconfig — never into a tracked
+#                       manifest — so signed builds (`make ship`,
+#                       `make screenshots`, plain xcodebuild) work without
+#                       manual edits and the Team ID stays out of git.
+#                       Optional; if omitted, no Local.xcconfig is written and
+#                       the rename-complete summary says so. bin/bootstrap-fork.rb
+#                       auto-fills from .bootstrap.env's FASTLANE_TEAM_ID, so
+#                       the `make bootstrap-fork` path never leaves it unset.
 #   --dry-run           Preview substitutions without applying.
 #   --force             Override the on-main-branch gate AND the partial-
 #                       rename detection gate. Other gates (args validation,
@@ -76,16 +84,16 @@
 #
 # Idempotency:
 #   Re-running with SAME args after a successful first run detects
-#   already-renamed state via structural file-path signal counting;
-#   exits 0 silently. The check runs BEFORE the clean-tree gate so a
-#   second invocation on a dirty post-first-rename tree still resolves
-#   correctly.
+#   already-renamed state from app/Identity.xcconfig (APP_PRODUCT_NAME and
+#   BUNDLE_ID both already carry the requested values); exits 0 silently.
+#   The check runs BEFORE the clean-tree gate so a second invocation on a
+#   dirty post-first-rename tree still resolves correctly.
 #
 # All-or-nothing (HIGH-1 reset-hard rollback — replaces broken git stash):
 #   Pre-flight Gate 7 (clean tree) ensures HEAD == working tree pre-mutation.
-#   Any failure in sed/mv/xcodegen steps triggers ERR/EXIT/INT/TERM trap
+#   Any failure in sed/xcodegen steps triggers ERR/EXIT/INT/TERM trap
 #   which executes:
-#     1. rm -rf app/$APP_NAME.xcodeproj  (regenerated dir is gitignored)
+#     1. rm -rf app/App.xcodeproj        (regenerated dir is gitignored)
 #     2. git reset --hard HEAD --quiet   (restores tracked-file mods + git mv)
 #     3. git clean -fd --quiet           (removes new untracked files; NOT -fdx)
 #   Exits 1 with stderr "rolled back to pre-rename state."
@@ -130,7 +138,7 @@ SLUG=""
 YEAR_ARG=""
 GENERATOR="xcodegen"   # default; --generator=tuist|xcodegen overrides (#38)
 PLATFORMS="ios,macos"  # default; --platforms=ios|macos|ios,macos overrides (matches .bootstrap.env PLATFORMS)
-TEAM_ID=""             # optional; --team-id=A1B2C3D4E5 substitutes TEAM_ID_PLACEHOLDER in app/project.yml + app/Project.swift
+TEAM_ID=""             # optional; --team-id=A1B2C3D4E5 is written to gitignored app/Local.xcconfig as DEVELOPMENT_TEAM
 DRY_RUN=0
 FORCE=0
 
@@ -287,7 +295,7 @@ validate_args() {
   # Apple Developer team IDs are 10-char alphanumeric (uppercase letters
   # + digits). The .bootstrap.env.example FASTLANE_TEAM_ID hint is the
   # same regex; if a forker sets something invalid, fail-loud here rather
-  # than silently writing garbage into app/project.yml + app/Project.swift.
+  # than silently writing garbage into app/Local.xcconfig.
   if [ -n "$TEAM_ID" ]; then
     [[ "$TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || \
       fail "invalid --team-id '$TEAM_ID' — must match ^[A-Z0-9]{10}$ (10-char uppercase alphanumeric, e.g. A1B2C3D4E5)"
@@ -306,7 +314,7 @@ validate_args() {
 # working tree, so `git reset --hard HEAD` restores tracked-file
 # modifications and `git mv` staging. Plus:
 #
-#   - rm -rf app/$APP_NAME.xcodeproj  (regenerated dir is gitignored;
+#   - rm -rf app/App.xcodeproj        (regenerated dir is gitignored;
 #     `git clean -fd` without -x won't touch it)
 #   - git clean -fd                    (removes new untracked files;
 #     NEVER -fdx — forker's .bootstrap.env / .env.local would be deleted)
@@ -341,10 +349,10 @@ rollback() {
   printf '    ✗ rolling back to pre-rename state...\n' >&2
 
   # Step 1: remove the regenerated xcodeproj if T7 ran (it's gitignored,
-  # so `git clean -fd` without -x won't touch it). APP_NAME may be
-  # unset if rollback fires before arg parsing — guard.
-  if [ -n "${APP_NAME:-}" ] && [ -d "app/$APP_NAME.xcodeproj" ]; then
-    rm -rf "app/$APP_NAME.xcodeproj" 2>/dev/null || true
+  # so `git clean -fd` without -x won't touch it). The project name is a
+  # constant, so there is no APP_NAME-derived path to guard.
+  if [ -d "app/App.xcodeproj" ]; then
+    rm -rf "app/App.xcodeproj" 2>/dev/null || true
   fi
 
   # Step 2: git reset --hard restores tracked-file modifications +
@@ -403,7 +411,7 @@ trap 'rollback' EXIT
 PATHSPEC_EXCLUSIONS=(
   ':!.planning'
   ':!LICENSE'
-  ':!app/HelloApp.xcodeproj'
+  ':!app/App.xcodeproj'
   ':!bin/rename.sh'
   ':!ci/test-rename.sh'
   ':!ci/test-rename-gates.sh'
@@ -510,32 +518,29 @@ apply_substitutions() {
   # no HelloApp/com.example.helloapp/etc. literal substrings — it
   # passes through Step F (broad HelloApp -> APP_NAME sweep) untouched.
   #
-  # We derive `current_display` from project.yml (or Project.swift as
-  # fallback for tuist-only forks) instead of hardcoding "HelloApp".
-  # Rationale: on a freshly-cloned template the CFBundleDisplayName is
-  # the broad-sweep token (`HelloApp`), but on any FORK of this template
-  # CFBundleDisplayName is the fork's DISPLAY_NAME (e.g.
+  # We derive `current_display` from app/Identity.xcconfig's DISPLAY_NAME
+  # line instead of hardcoding "HelloApp". Rationale: on a freshly-cloned
+  # template DISPLAY_NAME is the broad-sweep token (`HelloApp`), but on any
+  # FORK of this template it is the fork's DISPLAY_NAME (e.g.
   # `Indiagram Smoke App`). Hardcoding the broad-sweep token here means
-  # Step E silently no-ops on re-forks, then Step F's
-  # `HelloApp -> APP_NAME` sweep doesn't catch the already-renamed
-  # CFBundleDisplayName, leaving every re-forked tree with the wrong
-  # app display name. Runtime-derive fixes this.
+  # Step E silently no-ops on re-forks, then Step F's `HelloApp -> APP_NAME`
+  # sweep doesn't catch the already-renamed display name, leaving every
+  # re-forked tree with the wrong app display name. Runtime-derive fixes
+  # this. The manifests carry no display name at all — both reference
+  # $(DISPLAY_NAME) — so there is nothing to anchor there.
   step "Replacing DISPLAY_NAME sites with placeholder (HIGH-6)"
 
   local current_display=""
-  if [ -f app/project.yml ]; then
-    current_display=$(awk '/CFBundleDisplayName:/{
-      sub(/^[[:space:]]*CFBundleDisplayName:[[:space:]]*/, "")
+  if [ -f app/Identity.xcconfig ]; then
+    current_display=$(awk '/^[[:space:]]*DISPLAY_NAME[[:space:]]*=/{
+      sub(/^[[:space:]]*DISPLAY_NAME[[:space:]]*=[[:space:]]*/, "")
       sub(/[[:space:]]*$/, "")
       print
       exit
-    }' app/project.yml)
-  fi
-  if [ -z "$current_display" ] && [ -f app/Project.swift ]; then
-    current_display=$(grep -oE '"CFBundleDisplayName": "[^"]*"' app/Project.swift | head -1 | sed 's/.*"CFBundleDisplayName": "\(.*\)"/\1/')
+    }' app/Identity.xcconfig)
   fi
   if [ -z "$current_display" ]; then
-    fail "Could not extract current CFBundleDisplayName from app/project.yml or app/Project.swift"
+    fail "Could not extract current DISPLAY_NAME from app/Identity.xcconfig"
   fi
   # Sed safety: a `#` in the display name would break our chosen delimiter.
   # `#` is unusual in app display names (Apple's "App Name" guidance
@@ -546,20 +551,14 @@ apply_substitutions() {
   esac
   ok "current DISPLAY_NAME detected: '$current_display'"
 
-  if [ -f app/project.yml ]; then
-    sed -i '' "s#CFBundleDisplayName: $current_display#CFBundleDisplayName: $DISPLAY_PLACEHOLDER#g" app/project.yml
-    ok "DISPLAY placeholder set in app/project.yml (2 CFBundleDisplayName sites)"
-  fi
-
-  # #38 closure: app/Project.swift's two CFBundleDisplayName lines need
-  # the same placeholder treatment as project.yml. Without anchoring,
-  # Step F's broad HelloApp -> APP_NAME sweep would set CFBundleDisplayName
-  # to the APP_NAME (forker's code-name) instead of the DISPLAY_NAME
-  # (forker's user-facing name). Project.swift was added to `main` in #39.
-  if [ -f app/Project.swift ]; then
-    sed -i '' "s#\"CFBundleDisplayName\": \"$current_display\"#\"CFBundleDisplayName\": \"$DISPLAY_PLACEHOLDER\"#g" app/Project.swift
-    ok "DISPLAY placeholder set in app/Project.swift (2 CFBundleDisplayName sites)"
-  fi
+  # Without anchoring, Step F's broad HelloApp -> APP_NAME sweep would set
+  # DISPLAY_NAME to the APP_NAME (forker's code-name) instead of the
+  # DISPLAY_NAME (forker's user-facing name). One site: the xcconfig feeds
+  # CFBundleDisplayName on both platforms through both generators.
+  sed -i '' "s#^\([[:space:]]*DISPLAY_NAME[[:space:]]*=[[:space:]]*\)$current_display[[:space:]]*\$#\1$DISPLAY_PLACEHOLDER#" app/Identity.xcconfig
+  grep -q "$DISPLAY_PLACEHOLDER" app/Identity.xcconfig || \
+    fail "DISPLAY placeholder was not set in app/Identity.xcconfig — sed regression"
+  ok "DISPLAY placeholder set in app/Identity.xcconfig (DISPLAY_NAME)"
 
   if [ -f app/Shared/ContentView.swift ]; then
     sed -i '' "s#Text(\"$current_display\")#Text(\"$DISPLAY_PLACEHOLDER\")#g" app/Shared/ContentView.swift
@@ -630,33 +629,46 @@ apply_substitutions() {
     fail "HIGH-6 violation: $REMAINING placeholder match(es) remain after Step G"
   ok "placeholder fully replaced (0 remaining)"
 
-  # Step H: TEAM_ID_PLACEHOLDER -> $TEAM_ID (signing team substitution)
-  # Source literal `TEAM_ID_PLACEHOLDER` ships in app/project.yml (xcodegen)
-  # and app/Project.swift (tuist). Without substitution, every signed build
-  # path fails — `make ship` (always), `make screenshots` outside the
-  # CODE_SIGNING_ALLOWED=NO bypass added in #185, and any plain
-  # `xcodebuild build` invocation. Only runs when --team-id was supplied;
-  # without it the placeholder remains and the rename-complete summary
-  # warns. bin/bootstrap-fork.rb always passes --team-id from
-  # .bootstrap.env's FASTLANE_TEAM_ID so the `make bootstrap-fork` path
-  # never leaves a placeholder behind.
+  # Step H: DEVELOPMENT_TEAM -> app/Local.xcconfig (gitignored)
+  # The Apple Team ID is per-clone signing configuration, not identity: it
+  # goes into app/Local.xcconfig, which app/Identity.xcconfig pulls in with
+  # `#include?` and which .gitignore keeps out of every commit. It is never
+  # substituted into a tracked manifest. (This step used to sed
+  # TEAM_ID_PLACEHOLDER inside app/project.yml + app/Project.swift, which
+  # put the real Team ID into git on the success path of every rename.)
   #
-  # SURGICAL — only the 2 project files, not a broad git-grep sweep. Other
-  # files that contain `TEAM_ID_PLACEHOLDER` use it as a LITERAL in their
-  # OWN substitution logic (bin/switch-to-xcodegen.sh's sed pattern,
-  # ci/local-release-check.sh's ExportOptions-plist patch, build-script
-  # comments). A broad sweep would corrupt those scripts' source-of-truth
-  # — e.g. switch-to-xcodegen.sh's `sed s|TEAM_ID_PLACEHOLDER|$fork_team|`
-  # would become `sed s|A1B2C3D4E5|$fork_team|`, baking apple-shipkit's
-  # team id permanently into every renamed fork.
+  # Without a resolvable DEVELOPMENT_TEAM every signed build path fails —
+  # `make ship` (always), `make screenshots` outside the
+  # CODE_SIGNING_ALLOWED=NO bypass added in #185, and any plain
+  # `xcodebuild build` invocation on iOS — and on macOS the build succeeds
+  # ad-hoc signed and says nothing. So the outcome here is always explicit:
+  # the file is written and named, or the summary says it was not.
+  # bin/bootstrap-fork.rb always passes --team-id from .bootstrap.env's
+  # FASTLANE_TEAM_ID so the `make bootstrap-fork` path never skips it.
+  #
+  # Two refusals, both loud. A manifest that still carries the placeholder
+  # is a tree from before the identity xcconfig, and writing Local.xcconfig
+  # beside it would leave two competing DEVELOPMENT_TEAMs. And the write
+  # only happens if git confirms the path is ignored — a Team ID must never
+  # land in a file git would track. Other files that contain the literal
+  # `TEAM_ID_PLACEHOLDER` (ci/local-release-check.sh's ExportOptions-plist
+  # patch, the ExportOptions plists themselves) substitute into a TEMPORARY
+  # copy at build time and are correct as they are.
   if [ -n "$TEAM_ID" ]; then
-    step "Substituting TEAM_ID_PLACEHOLDER -> $TEAM_ID"
+    step "Writing DEVELOPMENT_TEAM -> app/Local.xcconfig (gitignored)"
     for f in app/project.yml app/Project.swift; do
       if [ -f "$f" ] && grep -q 'TEAM_ID_PLACEHOLDER' "$f"; then
-        sed -i '' "s|TEAM_ID_PLACEHOLDER|$TEAM_ID|g" "$f"
-        ok "TEAM_ID substituted in $f"
+        fail "$f still carries TEAM_ID_PLACEHOLDER — the Team ID belongs in gitignored app/Local.xcconfig, never in a tracked manifest; remove the DEVELOPMENT_TEAM line from $f and re-run"
       fi
     done
+    git check-ignore -q app/Local.xcconfig || \
+      fail "app/Local.xcconfig is not gitignored — refusing to write a Team ID into a file git would track (restore the .gitignore rule)"
+    local team_line="DEVELOPMENT_TEAM = $TEAM_ID"
+    if [ -f app/Local.xcconfig ] && ! grep -qxF "$team_line" app/Local.xcconfig; then
+      fail "app/Local.xcconfig already exists and does not say '$team_line' — refusing to overwrite it; edit it by hand"
+    fi
+    printf '%s\n' "$team_line" > app/Local.xcconfig
+    ok "app/Local.xcconfig written ($team_line) — gitignored, never committed"
   fi
 }
 
@@ -665,98 +677,54 @@ apply_substitutions() {
 # Returns 0 if fully renamed (caller should silent-exit-0).
 # Returns 1 if partial-rename state (caller should fail unless --force).
 # Returns 2 if pre-rename state (caller should proceed normally).
+# The signal is app/Identity.xcconfig, the one tracked file the rename
+# writes identity into. The project structure is a constant, so file paths
+# say nothing about whether a rename happened.
 check_idempotency() {
-  local target_xcodeproj="app/$APP_NAME.xcodeproj"
-  local target_swift="app/Shared/$APP_NAME.swift"
-  local target_ios_ent="app/iOS/$APP_NAME.entitlements"
-  local target_macos_ent="app/macOS/$APP_NAME.entitlements"
+  local identity="app/Identity.xcconfig"
+  [ -f "$identity" ] || return 1   # no identity file at all: not a tree this script understands
 
-  local source_swift="app/Shared/HelloApp.swift"
-  local source_ios_ent="app/iOS/HelloApp.entitlements"
-  local source_macos_ent="app/macOS/HelloApp.entitlements"
+  # Read a key's value: `KEY = value`, leading/trailing blanks stripped.
+  xcconfig_value() {
+    awk -v key="$1" '
+      $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+        sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "")
+        sub(/[[:space:]]*$/, "")
+        print
+        exit
+      }' "$identity"
+  }
+
+  local product bundle
+  product=$(xcconfig_value APP_PRODUCT_NAME)
+  bundle=$(xcconfig_value BUNDLE_ID)
 
   local renamed=0
-  [ -d "$target_xcodeproj" ] && renamed=$((renamed + 1))
-  [ -f "$target_swift" ] && [ ! -f "$source_swift" ] && renamed=$((renamed + 1))
-  [ -f "$target_ios_ent" ] && [ ! -f "$source_ios_ent" ] && renamed=$((renamed + 1))
-  [ -f "$target_macos_ent" ] && [ ! -f "$source_macos_ent" ] && renamed=$((renamed + 1))
+  [ "$product" = "$APP_NAME" ]  && renamed=$((renamed + 1))
+  [ "$bundle"  = "$BUNDLE_ID" ] && renamed=$((renamed + 1))
 
   local source_present=0
-  [ -f "$source_swift" ] && source_present=$((source_present + 1))
-  [ -f "$source_ios_ent" ] && source_present=$((source_present + 1))
-  [ -f "$source_macos_ent" ] && source_present=$((source_present + 1))
+  [ "$product" = "HelloApp" ]             && source_present=$((source_present + 1))
+  [ "$bundle"  = "com.example.helloapp" ] && source_present=$((source_present + 1))
 
-  if [ "$renamed" -ge 3 ] && [ "$source_present" -eq 0 ]; then
+  if [ "$renamed" -eq 2 ] && [ "$source_present" -eq 0 ]; then
     return 0  # idempotent no-op (full rename detected)
   fi
 
-  if [ "$renamed" -eq 0 ] && [ "$source_present" -ge 3 ]; then
+  if [ "$renamed" -eq 0 ] && [ "$source_present" -eq 2 ]; then
     return 2  # proceed with normal rename
   fi
 
   return 1
 }
 
-# ── File-path renames via git mv (REQ-3; D-1 mv-after-sed ordering) ──────
-
-rename_file_paths() {
-  step "Renaming file paths (3 canonical git mv operations + up to 2 optional test-target pairs)"
-
-  local pairs=(
-    "app/Shared/HelloApp.swift:app/Shared/$APP_NAME.swift"
-    "app/iOS/HelloApp.entitlements:app/iOS/$APP_NAME.entitlements"
-    "app/macOS/HelloApp.entitlements:app/macOS/$APP_NAME.entitlements"
-  )
-
-  # Optional pairs introduced in #88 (HelloAppTests + HelloAppMacOSTests
-  # unit-test targets). Older forks created before #88 lack these files
-  # entirely; the loop's existing fail-on-missing-src guard would break
-  # bin/rename.sh on those trees, so the optional pairs use a separate
-  # loop with `continue` instead of `fail` when src is missing. The
-  # in-file `class HelloAppTests`/`class HelloAppMacOSTests` declarations
-  # get renamed by Step F's broad sweep regardless; this loop only
-  # handles the file BASENAMES, which Step F can't reach (sed -i edits
-  # content, doesn't rename files).
-  local optional_pairs=(
-    "app/Tests/HelloAppTests.swift:app/Tests/${APP_NAME}Tests.swift"
-    "app/MacOSTests/HelloAppMacOSTests.swift:app/MacOSTests/${APP_NAME}MacOSTests.swift"
-  )
-
-  local pair src dst
-  for pair in "${pairs[@]}"; do
-    src="${pair%%:*}"
-    dst="${pair##*:}"
-
-    if [ ! -f "$src" ]; then
-      fail "rename source missing: $src — repo state unexpected"
-    fi
-
-    if [ -e "$dst" ]; then
-      fail "rename target already exists: $dst — refusing to overwrite"
-    fi
-
-    git mv "$src" "$dst"
-    ok "$src -> $dst"
-  done
-
-  for pair in "${optional_pairs[@]}"; do
-    src="${pair%%:*}"
-    dst="${pair##*:}"
-
-    # Silently skip when src is absent — pre-#88 forks legitimately don't
-    # have these files, and skipping keeps bin/rename.sh idempotent across
-    # historical fork generations. ok-line stays observable when the rename
-    # DOES happen so users see the action in the script's output.
-    [ -f "$src" ] || continue
-
-    if [ -e "$dst" ]; then
-      fail "rename target already exists: $dst — refusing to overwrite"
-    fi
-
-    git mv "$src" "$dst"
-    ok "$src -> $dst (optional test-target rename)"
-  done
-}
+# ── File paths ─────────────────────────────────────────────────────────────
+# There are no file-path renames. app/Shared/App.swift, app/iOS/App.entitlements,
+# app/macOS/App.entitlements, app/Tests/AppTests.swift and
+# app/MacOSTests/AppMacOSTests.swift are the project's constant structure,
+# referenced by literal path from both manifests; renaming them to the
+# fork's name would break every CODE_SIGN_ENTITLEMENTS reference. (This
+# script used to `git mv` five files here.)
 
 # ── Pre-flight gate functions (called by main; iter-5 BLOCKER-3) ─────────
 #
@@ -810,21 +778,26 @@ gate_on_main() {
 regen_xcodeproj() {
   step "Regenerating xcodeproj via xcodegen"
 
-  grep -q "^name: $APP_NAME$" app/project.yml || \
-    fail "project.yml \`name:\` not substituted to '$APP_NAME' — sed sweep regression"
-  ok "project.yml \`name: $APP_NAME\` confirmed pre-xcodegen"
+  # The project name is a constant, deliberately untouched by the sweep: the
+  # generated project is app/App.xcodeproj on every fork, and identity
+  # resolves from app/Identity.xcconfig at build time.
+  grep -q "^name: App$" app/project.yml || \
+    fail "project.yml \`name:\` is not the constant 'App' — the sweep must not touch the project name"
+  ok "project.yml \`name: App\` confirmed pre-xcodegen"
 
-  if [ -d "app/HelloApp.xcodeproj" ]; then
-    rm -rf "app/HelloApp.xcodeproj"
-    ok "removed gitignored app/HelloApp.xcodeproj"
+  if [ -d "app/App.xcodeproj" ]; then
+    rm -rf "app/App.xcodeproj"
+    ok "removed gitignored app/App.xcodeproj (stale)"
   fi
 
+  # xcodegen runs bin/preflight-identity.rb first (options.preGenCommand),
+  # so an identity key the sweep somehow emptied fails here by name.
   ( cd app && xcodegen generate ) || \
-    fail "xcodegen generate failed — check app/project.yml syntax post-substitution"
+    fail "xcodegen generate failed — check app/project.yml and app/Identity.xcconfig post-substitution"
 
-  [ -d "app/$APP_NAME.xcodeproj" ] || \
-    fail "xcodegen completed but app/$APP_NAME.xcodeproj/ not created — unexpected"
-  ok "app/$APP_NAME.xcodeproj/ regenerated"
+  [ -d "app/App.xcodeproj" ] || \
+    fail "xcodegen completed but app/App.xcodeproj/ not created — unexpected"
+  ok "app/App.xcodeproj/ regenerated"
 }
 
 # ── --dry-run preview (REQ-8; T8 will extend this) ───────────────────────
@@ -862,29 +835,26 @@ EOF
 
   echo
   echo "DISPLAY_NAME anchored sites (-> $DISPLAY_NAME via __GSD_DISPLAY_PLACEHOLDER__):"
-  echo "  app/project.yml: CFBundleDisplayName (2 sites — iOS + macOS)"
+  echo "  app/Identity.xcconfig: DISPLAY_NAME (feeds CFBundleDisplayName on both platforms)"
   echo "  app/Shared/ContentView.swift: Text(\"HelloApp\")"
   echo "  app/UITests/AppStoreScreenshotTests.swift: staticTexts[\"HelloApp\"]"
   echo "  fastlane/metadata/en-US/name.txt: whole-file"
-  if [ -f app/Project.swift ]; then
-    echo "  app/Project.swift: CFBundleDisplayName (2 sites — iOS + macOS, Tuist manifest)"
-  fi
 
   echo
   echo "File-path renames:"
-  echo "  app/Shared/HelloApp.swift       -> app/Shared/$APP_NAME.swift"
-  echo "  app/iOS/HelloApp.entitlements   -> app/iOS/$APP_NAME.entitlements"
-  echo "  app/macOS/HelloApp.entitlements -> app/macOS/$APP_NAME.entitlements"
-  if [ -f app/Tests/HelloAppTests.swift ]; then
-    echo "  app/Tests/HelloAppTests.swift            -> app/Tests/${APP_NAME}Tests.swift"
-  fi
-  if [ -f app/MacOSTests/HelloAppMacOSTests.swift ]; then
-    echo "  app/MacOSTests/HelloAppMacOSTests.swift  -> app/MacOSTests/${APP_NAME}MacOSTests.swift"
+  echo "  none — app/App.xcodeproj, App.swift, App.entitlements and the App*Tests targets are constants"
+
+  echo
+  echo "Team ID:"
+  if [ -n "$TEAM_ID" ]; then
+    echo "  app/Local.xcconfig (gitignored)  <-  DEVELOPMENT_TEAM = $TEAM_ID"
+  else
+    echo "  --team-id not given: app/Local.xcconfig will NOT be written"
   fi
 
   echo
   echo "xcodegen regen:"
-  echo "  cd app && xcodegen generate  ->  app/$APP_NAME.xcodeproj/"
+  echo "  cd app && xcodegen generate  ->  app/App.xcodeproj/"
 
   if [ "$GENERATOR" = "tuist" ]; then
     echo
@@ -1002,7 +972,6 @@ main() {
   # protecting the forker's dirty working tree.
       MUTATION_STARTED=1
       apply_substitutions
-      rename_file_paths
       regen_xcodeproj
 
   # Final mutation phase: --generator=tuist invokes bin/switch-to-tuist.sh
@@ -1028,8 +997,10 @@ main() {
   step "Rename complete"
   ok "$APP_NAME ($BUNDLE_ID) — \"$DISPLAY_NAME\""
   if [ -z "$TEAM_ID" ]; then
-    printf '\033[33m⚠ \033[0m  TEAM_ID_PLACEHOLDER still in app/project.yml + app/Project.swift — set FASTLANE_TEAM_ID in .bootstrap.env\n'
-    printf '\033[33m⚠ \033[0m  or re-run `bin/rename.sh ... --team-id=A1B2C3D4E5` to substitute. Signed builds will fail until then.\n'
+    printf '\033[33m⚠ \033[0m  app/Local.xcconfig NOT written (no --team-id): DEVELOPMENT_TEAM is unresolved. Signed builds fail on iOS and sign ad-hoc on macOS until it exists.\n'
+    printf '\033[33m⚠ \033[0m  Create it (gitignored) with `DEVELOPMENT_TEAM = <your Team ID>`, or set FASTLANE_TEAM_ID in .bootstrap.env and run `make bootstrap-fork`. `ruby bin/preflight-identity.rb --require-team` names the gap.\n'
+  else
+    ok "app/Local.xcconfig carries DEVELOPMENT_TEAM (gitignored; never commit it)"
   fi
   ok "next: run 'make check' to verify the build is green"
 }

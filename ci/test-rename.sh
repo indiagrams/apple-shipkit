@@ -114,7 +114,7 @@ check_zero() {
   case "$mode" in
     F)
       hits=$(git grep -cw -F -e "$pat" -- . \
-              ':!.planning' ':!LICENSE' ':!app/HelloApp.xcodeproj' \
+              ':!.planning' ':!LICENSE' ':!app/App.xcodeproj' \
               ':!bin/rename.sh' ':!ci/test-rename.sh' ':!bin/lib/bootstrap.rb' ':!.github/workflows/bootstrap-doctor-matrix.yml' \
               ':!ci/test-rename-gates.sh' ':!bin/verify-rename.sh' \
               ':!ci/test-verify-rename.sh' 2>/dev/null \
@@ -122,7 +122,7 @@ check_zero() {
       ;;
     NW)
       hits=$(git grep -c -e "$pat" -- . \
-              ':!.planning' ':!LICENSE' ':!app/HelloApp.xcodeproj' \
+              ':!.planning' ':!LICENSE' ':!app/App.xcodeproj' \
               ':!bin/rename.sh' ':!ci/test-rename.sh' ':!bin/lib/bootstrap.rb' ':!.github/workflows/bootstrap-doctor-matrix.yml' \
               ':!ci/test-rename-gates.sh' ':!bin/verify-rename.sh' \
               ':!ci/test-verify-rename.sh' 2>/dev/null \
@@ -130,7 +130,7 @@ check_zero() {
       ;;
     *)
       hits=$(git grep -cw -e "$pat" -- . \
-              ':!.planning' ':!LICENSE' ':!app/HelloApp.xcodeproj' \
+              ':!.planning' ':!LICENSE' ':!app/App.xcodeproj' \
               ':!bin/rename.sh' ':!ci/test-rename.sh' ':!bin/lib/bootstrap.rb' ':!.github/workflows/bootstrap-doctor-matrix.yml' \
               ':!ci/test-rename-gates.sh' ':!bin/verify-rename.sh' \
               ':!ci/test-verify-rename.sh' 2>/dev/null \
@@ -164,38 +164,33 @@ test "$(git grep -cw -F -e "$TEST_BUNDLE" -- . ':!.planning' ':!LICENSE' \
   || fail "post-rename: '$TEST_BUNDLE' not present"
 ok "'$TEST_BUNDLE' has matches"
 
-# File-path renames complete
-test -f "app/Shared/$TEST_APP.swift" || fail "app/Shared/$TEST_APP.swift missing"
-test -f "app/iOS/$TEST_APP.entitlements" || fail "app/iOS/$TEST_APP.entitlements missing"
-test -f "app/macOS/$TEST_APP.entitlements" || fail "app/macOS/$TEST_APP.entitlements missing"
-test ! -f "app/Shared/HelloApp.swift" || fail "old app/Shared/HelloApp.swift still present"
-test ! -f "app/iOS/HelloApp.entitlements" || fail "old app/iOS/HelloApp.entitlements still present"
-test ! -f "app/macOS/HelloApp.entitlements" || fail "old app/macOS/HelloApp.entitlements still present"
+# The project structure is a constant: no file was renamed, and the files
+# the manifests reference by literal path are all still there.
+for f in app/Shared/App.swift app/iOS/App.entitlements app/macOS/App.entitlements \
+         app/Tests/AppTests.swift app/MacOSTests/AppMacOSTests.swift; do
+  test -f "$f" || fail "structural file $f missing after rename — the rename must not touch the constant structure"
+done
+test ! -f "app/Shared/$TEST_APP.swift" || fail "app/Shared/$TEST_APP.swift was created — the rename must not rename structural files"
+ok "constant structure intact (App.swift, App.entitlements x2, App*Tests.swift)"
 
-# Optional test-target file-path renames (added in #88; pre-#88 trees lack
-# these). Assert conditional on the new file basenames being present —
-# bin/rename.sh's optional_pairs loop silently skips when src is missing,
-# so the absence of HelloAppTests.swift pre-rename means absence of
-# ${TEST_APP}Tests.swift post-rename, which is fine.
-if [ -f "app/Tests/${TEST_APP}Tests.swift" ]; then
-  test ! -f "app/Tests/HelloAppTests.swift" \
-    || fail "old app/Tests/HelloAppTests.swift still present after rename"
-  ok "app/Tests/HelloAppTests.swift -> app/Tests/${TEST_APP}Tests.swift"
-fi
-if [ -f "app/MacOSTests/${TEST_APP}MacOSTests.swift" ]; then
-  test ! -f "app/MacOSTests/HelloAppMacOSTests.swift" \
-    || fail "old app/MacOSTests/HelloAppMacOSTests.swift still present after rename"
-  ok "app/MacOSTests/HelloAppMacOSTests.swift -> app/MacOSTests/${TEST_APP}MacOSTests.swift"
-fi
-ok "file-path renames complete"
+# Identity landed in the xcconfig, and the Team ID did not land in a tracked file
+grep -qE "^[[:space:]]*APP_PRODUCT_NAME[[:space:]]*=[[:space:]]*$TEST_APP[[:space:]]*$" app/Identity.xcconfig || \
+  fail "app/Identity.xcconfig: APP_PRODUCT_NAME is not '$TEST_APP'"
+grep -qE "^[[:space:]]*BUNDLE_ID[[:space:]]*=[[:space:]]*$TEST_BUNDLE[[:space:]]*$" app/Identity.xcconfig || \
+  fail "app/Identity.xcconfig: BUNDLE_ID is not '$TEST_BUNDLE'"
+grep -qF "DISPLAY_NAME     = $TEST_DISPLAY" app/Identity.xcconfig || \
+  fail "app/Identity.xcconfig: DISPLAY_NAME is not '$TEST_DISPLAY'"
+ok "app/Identity.xcconfig carries the fork identity"
 
-# xcodegen regenerated
-test -d "app/$TEST_APP.xcodeproj" || fail "app/$TEST_APP.xcodeproj missing"
-test ! -d "app/HelloApp.xcodeproj" || fail "old app/HelloApp.xcodeproj still present"
-test -f "app/$TEST_APP.xcodeproj/project.pbxproj" || fail "project.pbxproj missing"
-grep -q "$TEST_BUNDLE" "app/$TEST_APP.xcodeproj/project.pbxproj" || \
-  fail "PRODUCT_BUNDLE_IDENTIFIER '$TEST_BUNDLE' missing from pbxproj"
-ok "xcodegen regen complete"
+# xcodegen regenerated — the constant project, referencing the xcconfig
+test -d "app/App.xcodeproj" || fail "app/App.xcodeproj missing"
+test ! -d "app/$TEST_APP.xcodeproj" || fail "app/$TEST_APP.xcodeproj was generated — the project name must stay the constant App"
+test -f "app/App.xcodeproj/project.pbxproj" || fail "project.pbxproj missing"
+grep -q 'Identity.xcconfig' "app/App.xcodeproj/project.pbxproj" || \
+  fail "generated pbxproj does not reference Identity.xcconfig"
+! grep -q "$TEST_BUNDLE" "app/App.xcodeproj/project.pbxproj" || \
+  fail "generated pbxproj carries the bundle id as a literal — it must resolve from Identity.xcconfig"
+ok "xcodegen regen complete (app/App.xcodeproj, identity via Identity.xcconfig)"
 
 # LICENSE Copyright preserved
 grep -q "^Copyright (c) 2026 Indiagram LLC" LICENSE || \
@@ -310,13 +305,18 @@ step "Forced-failure rollback exercise (SPEC AC-19; HIGH-1 reset-hard)"
 git reset --hard --quiet HEAD
 git clean -fdx --quiet  # -x is fine here because WORK_DIR is fully owned by us
 
-test -f app/Shared/HelloApp.swift || \
-  fail "AC-19 setup: expected app/Shared/HelloApp.swift to be present pre-rename after reset"
+# A Step F sweep target (`HelloApp.title`); the structural files are never
+# substitution targets, so the forced failure has to land on a file the
+# sweep actually writes.
+test -f app/Shared/AccessibilityIdentifiers.swift || \
+  fail "AC-19 setup: expected app/Shared/AccessibilityIdentifiers.swift to be present pre-rename after reset"
+grep -q 'HelloApp.title' app/Shared/AccessibilityIdentifiers.swift || \
+  fail "AC-19 setup: app/Shared/AccessibilityIdentifiers.swift is not a HelloApp sweep target any more — pick another"
 test -x bin/rename.sh || \
   fail "AC-19 setup: bin/rename.sh missing or not executable after reset"
 
 # Force a failure on a substitution target by removing write permission.
-chmod 000 app/Shared/HelloApp.swift
+chmod 000 app/Shared/AccessibilityIdentifiers.swift
 
 set +e
 bin/rename.sh "$TEST_APP" "$TEST_BUNDLE" "$TEST_DISPLAY" \
@@ -325,7 +325,7 @@ RENAME_EXIT=$?
 set -e
 
 # Restore permissions BEFORE the assertions
-chmod 644 app/Shared/HelloApp.swift 2>/dev/null || true
+chmod 644 app/Shared/AccessibilityIdentifiers.swift 2>/dev/null || true
 
 # AC-19 (a): non-zero exit
 test "$RENAME_EXIT" -ne 0 || \
@@ -339,14 +339,14 @@ test "$DIRTY" = "0" || \
 $(git status --short)"
 ok "AC-19 (b): working tree clean after rollback"
 
-# AC-19 (c): pre-rename files restored
-test -f app/Shared/HelloApp.swift || \
-  fail "AC-19 (c): app/Shared/HelloApp.swift missing after rollback"
-test -f app/iOS/HelloApp.entitlements || \
-  fail "AC-19 (c): app/iOS/HelloApp.entitlements missing after rollback"
-test -f app/macOS/HelloApp.entitlements || \
-  fail "AC-19 (c): app/macOS/HelloApp.entitlements missing after rollback"
-ok "AC-19 (c): pre-rename file paths restored"
+# AC-19 (c): pre-rename state restored — the constant structure is intact
+# and the identity xcconfig is back on the template placeholders.
+for f in app/Shared/App.swift app/iOS/App.entitlements app/macOS/App.entitlements; do
+  test -f "$f" || fail "AC-19 (c): $f missing after rollback"
+done
+grep -qE '^[[:space:]]*BUNDLE_ID[[:space:]]*=[[:space:]]*com\.example\.helloapp[[:space:]]*$' app/Identity.xcconfig || \
+  fail "AC-19 (c): app/Identity.xcconfig BUNDLE_ID not restored to the template placeholder after rollback"
+ok "AC-19 (c): pre-rename state restored (structure intact, identity placeholders back)"
 
 step "AC-19 forced-failure rollback exercise: PASSED"
 
@@ -399,11 +399,14 @@ grep -q 'tuist generate --no-open' .github/workflows/pr.yml || \
   fail "--generator=tuist: .github/workflows/pr.yml still has 'run: xcodegen generate'"
 ok "--generator=tuist: 5 mutation surfaces verified (no project.yml, Brewfile, Makefile, ci/local-check.sh, pr.yml)"
 
-# CFBundleDisplayName placeholder verification — Project.swift's
-# CFBundleDisplayName lines must end up as DISPLAY_NAME (not APP_NAME).
-grep -qF "\"CFBundleDisplayName\": \"$TEST_DISPLAY\"" app/Project.swift || \
-  fail "--generator=tuist: app/Project.swift's CFBundleDisplayName not set to DISPLAY_NAME '$TEST_DISPLAY'"
-ok "Project.swift CFBundleDisplayName placeholder honored ('$TEST_DISPLAY')"
+# DISPLAY_NAME placeholder verification — the display name lives in
+# app/Identity.xcconfig (both manifests reference $(DISPLAY_NAME)) and must
+# end up as DISPLAY_NAME (not APP_NAME) on the Tuist path too.
+grep -qF "DISPLAY_NAME     = $TEST_DISPLAY" app/Identity.xcconfig || \
+  fail "--generator=tuist: app/Identity.xcconfig's DISPLAY_NAME not set to '$TEST_DISPLAY'"
+grep -qF '"CFBundleDisplayName": "$(DISPLAY_NAME)"' app/Project.swift || \
+  fail "--generator=tuist: app/Project.swift no longer references \$(DISPLAY_NAME) — the sweep must not touch the manifest's identity references"
+ok "DISPLAY_NAME placeholder honored in app/Identity.xcconfig ('$TEST_DISPLAY'); Project.swift still references \$(DISPLAY_NAME)"
 
 # Verify-rename must exit 0 silent on the --generator=tuist post-rename tree.
 set +e

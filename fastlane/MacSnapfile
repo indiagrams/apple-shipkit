@@ -6,8 +6,8 @@
 # This file is here for completeness if you ever choose to drive macOS via
 # fastlane snapshot in the future.
 
-scheme("HelloApp-macOS")
-project("app/HelloApp.xcodeproj")
+scheme("App-macOS")
+project("app/App.xcodeproj")
 configuration("Debug")
 output_directory("./fastlane/screenshots")
 

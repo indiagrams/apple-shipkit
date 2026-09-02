@@ -1,8 +1,20 @@
-# XcodeGen configuration for HelloApp.
+# XcodeGen configuration for App — the template's project structure.
 # Generate the .xcodeproj with: xcodegen generate
 # (https://github.com/yonaskolb/XcodeGen)
+#
+# Identity — bundle id, product name, display name, copyright — is NOT in this
+# file. Every identity setting below is a $(VAR) reference into
+# Identity.xcconfig, attached through `configFiles:`. An xcconfig value is
+# overridden by anything a manifest writes into the .pbxproj, so a value here
+# would silently win over the tracked source of truth.
+# app/Project.swift is the 1:1 Tuist equivalent — edit both.
 
-name: HelloApp
+# A literal, never ${APP_NAME}: XcodeGen expands ${VAR} from the environment in
+# any spec string, and an unset variable survives as a directory literally
+# named ${APP_NAME}.xcodeproj at exit 0. A constant has no variable to
+# resolve — scripts and workflows spell app/App.xcodeproj, App-iOS and
+# App-macOS outright.
+name: App
 
 options:
   bundleIdPrefix: com.example
@@ -14,6 +26,21 @@ options:
   groupSortPosition: top
   xcodeVersion: "26.0"
   defaultConfig: Release
+  # Refuse to generate against an incomplete Identity.xcconfig and NAME the
+  # missing variable. XcodeGen runs this with CWD = this directory, before
+  # spec validation, and exits with the script's own exit code (2 file
+  # absent, 3 variable missing or empty) having written no project. The hook
+  # is skipped under `xcodegen --use-cache` / `-c`, and Tuist has no
+  # equivalent hook at all — which is why ci/check-identity.sh runs the same
+  # script as plain text in pr.yml's config job, for both generators.
+  preGenCommand: ruby ../bin/preflight-identity.rb
+
+# Identity.xcconfig is the base layer of every configuration. It ends in
+# `#include? "Local.xcconfig"`, the gitignored per-clone file that carries
+# DEVELOPMENT_TEAM.
+configFiles:
+  Debug: Identity.xcconfig
+  Release: Identity.xcconfig
 
 settings:
   base:
@@ -22,14 +49,19 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     MARKETING_VERSION: "0.0.1"
     CURRENT_PROJECT_VERSION: "1"
-    DEVELOPMENT_TEAM: "TEAM_ID_PLACEHOLDER"   # auto-substituted by bin/rename.sh --team-id (auto-passed by bin/bootstrap-fork.rb from .bootstrap.env FASTLANE_TEAM_ID)
+    # DEVELOPMENT_TEAM is deliberately absent. The Apple Team ID resolves from
+    # the gitignored app/Local.xcconfig through Identity.xcconfig's optional
+    # include, and appears in no tracked build or signing configuration.
+    # Setting it here would put the value in git and override the include. A
+    # clone without Local.xcconfig gets a named failure from
+    # `bin/preflight-identity.rb --require-team`, not from Xcode.
     CODE_SIGN_STYLE: Automatic
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
 
 # ─── iOS app ──────────────────────────────────────────────────────────
 targets:
-  HelloApp-iOS:
+  App-iOS:
     type: application
     platform: iOS
     sources:
@@ -38,9 +70,15 @@ targets:
     info:
       path: iOS/Generated-Info.plist
       properties:
-        CFBundleDisplayName: HelloApp
+        CFBundleDisplayName: $(DISPLAY_NAME)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Set here, as a plist key, exactly as the macOS target does. An
+        # INFOPLIST_KEY_NSHumanReadableCopyright build setting reaches the
+        # bundle only under GENERATE_INFOPLIST_FILE = YES, and this target's
+        # plist is this block (GENERATE_INFOPLIST_FILE = NO), so the setting
+        # resolved in -showBuildSettings but the built plist had no key.
+        NSHumanReadableCopyright: $(COPYRIGHT)
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -56,15 +94,18 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.helloapp
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID)
+        # On the two APP targets only. A project-level PRODUCT_NAME would leak
+        # into all four test bundles and collide the two iOS .xctest bundles
+        # at one path — see the comment in Identity.xcconfig.
+        PRODUCT_NAME: $(APP_PRODUCT_NAME)
         TARGETED_DEVICE_FAMILY: "1,2"           # iPhone + iPad
         SUPPORTS_MACCATALYST: NO
-        CODE_SIGN_ENTITLEMENTS: iOS/HelloApp.entitlements
+        CODE_SIGN_ENTITLEMENTS: iOS/App.entitlements
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-        INFOPLIST_KEY_NSHumanReadableCopyright: "TODO Copyright © <year> <Your Org>. All rights reserved."
 
 # ─── macOS app ────────────────────────────────────────────────────────
-  HelloApp-macOS:
+  App-macOS:
     type: application
     platform: macOS
     sources:
@@ -78,12 +119,12 @@ targets:
     info:
       path: macOS/Generated-Info.plist
       properties:
-        CFBundleDisplayName: HelloApp
+        CFBundleDisplayName: $(DISPLAY_NAME)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSApplicationCategoryType: public.app-category.utilities
-        NSHumanReadableCopyright: "TODO Copyright © <year> <Your Org>. All rights reserved."
+        NSHumanReadableCopyright: $(COPYRIGHT)
         NSPrincipalClass: NSApplication
         # CFBundleIconName intentionally NOT set — its presence makes Sonoma+
         # prefer Assets.car AppIcon (which has actool's broken 4-size set).
@@ -92,8 +133,9 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.helloapp
-        CODE_SIGN_ENTITLEMENTS: macOS/HelloApp.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID)
+        PRODUCT_NAME: $(APP_PRODUCT_NAME)       # app targets only
+        CODE_SIGN_ENTITLEMENTS: macOS/App.entitlements
         # Suppress actool's auto-injection of CFBundleIconName=AppIcon. Empty
         # value = actool emits Assets.car as before but does not set the key,
         # so macOS reads CFBundleIconFile → our hand-rolled 10-size .icns.
@@ -114,7 +156,10 @@ targets:
           echo "Overwrote $SCRIPT_OUTPUT_FILE_0 with hand-rolled 10-size .icns"
 
 # ─── UITest target (drives App Store screenshot capture) ────────────────────
-  HelloAppUITests:
+# The four test-bundle identifiers derive from $(BUNDLE_ID) with a fixed
+# suffix, so the xcconfig stays at four keys. No PRODUCT_NAME on any test
+# target: each keeps its target name.
+  AppUITests:
     type: bundle.ui-testing
     platform: iOS
     sources:
@@ -128,8 +173,8 @@ targets:
       - path: Shared/AccessibilityIdentifiers.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.helloapp.uitests
-        TEST_TARGET_NAME: HelloApp-iOS
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID).uitests
+        TEST_TARGET_NAME: App-iOS
         GENERATE_INFOPLIST_FILE: YES
         # SnapshotHelper.swift is fastlane-shipped and predates Swift 6's
         # strict-by-default concurrency model. Pin this target to Swift 5
@@ -137,92 +182,107 @@ targets:
         SWIFT_VERSION: "5.9"
         SWIFT_STRICT_CONCURRENCY: minimal
     dependencies:
-      - target: HelloApp-iOS
+      - target: App-iOS
 
 
 # ─── Unit-test target (sanity tests; forks should add real tests here) ─────
-  HelloAppTests:
+  AppTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: Tests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.helloapp.tests
-        TEST_TARGET_NAME: HelloApp-iOS
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID).tests
+        TEST_TARGET_NAME: App-iOS
         GENERATE_INFOPLIST_FILE: YES
+        # XcodeGen derives a unit-test bundle's TEST_HOST from the host TARGET
+        # name at generation time ($(BUILT_PRODUCTS_DIR)/App-iOS.app/App-iOS),
+        # but the host's PRODUCT_NAME resolves at BUILD time to
+        # $(APP_PRODUCT_NAME), so nothing builds at that path and `xcodebuild
+        # test` fails with "Could not find test host" while `xcodebuild build`
+        # stays green. Spell the host path from the product name instead —
+        # the shape Tuist derives itself from productName:. UI-test bundles
+        # use TEST_TARGET_NAME (a target name, correct as is) and carry no
+        # TEST_HOST.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/$(APP_PRODUCT_NAME)
+        BUNDLE_LOADER: $(TEST_HOST)
     dependencies:
-      - target: HelloApp-iOS
+      - target: App-iOS
 # ─── macOS UITest target (drives App Store screenshot capture) ─────────────
-  HelloAppMacOSUITests:
+  AppMacOSUITests:
     type: bundle.ui-testing
     platform: macOS
     sources:
       - path: MacOSUITests
-      # See HelloAppUITests above — same rationale for the shared
+      # See AppUITests above — same rationale for the shared
       # selector enum. The macOS UI test doesn't query it today, but
       # making the symbol available so future macOS test screens can.
       - path: Shared/AccessibilityIdentifiers.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.helloapp.macuitests
-        TEST_TARGET_NAME: HelloApp-macOS
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID).macuitests
+        TEST_TARGET_NAME: App-macOS
         GENERATE_INFOPLIST_FILE: YES
         # AppStoreScreenshotTests overrides XCTestCase.setUpWithError /
         # tearDownWithError in a @MainActor class — Swift 6 errors on
         # main-actor-isolated mutation in nonisolated overrides. Pin this
-        # target to Swift 5 mode (parallel to HelloAppUITests).
+        # target to Swift 5 mode (parallel to AppUITests).
         SWIFT_VERSION: "5.9"
         SWIFT_STRICT_CONCURRENCY: minimal
     dependencies:
-      - target: HelloApp-macOS
+      - target: App-macOS
 
 # ─── macOS unit-test target ─────────────────────────────────────────────
-  HelloAppMacOSTests:
+  AppMacOSTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: MacOSTests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.helloapp.mactests
-        TEST_TARGET_NAME: HelloApp-macOS
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID).mactests
+        TEST_TARGET_NAME: App-macOS
         GENERATE_INFOPLIST_FILE: YES
+        # Same mechanism as AppTests above; macOS bundles keep the executable
+        # under Contents/MacOS/.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/Contents/MacOS/$(APP_PRODUCT_NAME)
+        BUNDLE_LOADER: $(TEST_HOST)
     dependencies:
-      - target: HelloApp-macOS
+      - target: App-macOS
 
 # ─── Schemes ──────────────────────────────────────────────────────────
 schemes:
-  HelloApp-iOS:
+  App-iOS:
     build:
       targets:
-        HelloApp-iOS: all
-        HelloAppUITests: [test]
-        HelloAppTests: [test]
+        App-iOS: all
+        AppUITests: [test]
+        AppTests: [test]
     run:
       config: Debug
-      executable: HelloApp-iOS
+      executable: App-iOS
     test:
       config: Debug
       targets:
-        - HelloAppUITests
-        - HelloAppTests
+        - AppUITests
+        - AppTests
     archive:
       config: Release
 
-  HelloApp-macOS:
+  App-macOS:
     build:
       targets:
-        HelloApp-macOS: all
-        HelloAppMacOSUITests: [test]
-        HelloAppMacOSTests: [test]
+        App-macOS: all
+        AppMacOSUITests: [test]
+        AppMacOSTests: [test]
     run:
       config: Debug
-      executable: HelloApp-macOS
+      executable: App-macOS
     test:
       config: Debug
       targets:
-        - HelloAppMacOSUITests
-        - HelloAppMacOSTests
+        - AppMacOSUITests
+        - AppMacOSTests
     archive:
       config: Release

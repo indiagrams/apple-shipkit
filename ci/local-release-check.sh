@@ -8,8 +8,8 @@
 #   ci/local-release-check.sh v0.1.0 --sign                   # both
 #
 # Output (created if missing):
-#   build/HelloApp-<version>.ipa
-#   build/HelloApp-<version>.pkg
+#   build/App-<version>.ipa
+#   build/App-<version>.pkg
 #
 # Reads .bootstrap.env (or .env.local if present) for:
 #   FASTLANE_TEAM_ID  (or APPLE_TEAM_ID as a fallback name)
@@ -164,11 +164,17 @@ fi
 step "App icon"
 "$REPO_ROOT/ci/check-app-icon.sh" || fail "placeholder app icon — see ci/check-app-icon.sh"
 
+# The team is passed on the xcodebuild command line below (DEVELOPMENT_TEAM=
+# "$TEAM_ID" from .bootstrap.env), so the gitignored app/Local.xcconfig is not
+# required here; the four identity values are.
+step "App identity"
+"$REPO_ROOT/ci/check-identity.sh" || fail "app/Identity.xcconfig incomplete — see ci/check-identity.sh"
+
 # ── Regenerate xcodeproj + Generated-Info.plist ───────────────────────────────
 
 step "xcodegen generate"
 ( cd app && xcodegen generate >/dev/null )
-ok "HelloApp.xcodeproj regenerated"
+ok "App.xcodeproj regenerated"
 
 mkdir -p "$REPO_ROOT/build"
 
@@ -263,7 +269,7 @@ fi
 if $SIGN_IOS; then
   step "iOS archive (signed)"
 
-  IOS_ARCHIVE="$WORK_DIR/HelloApp-iOS.xcarchive"
+  IOS_ARCHIVE="$WORK_DIR/App-iOS.xcarchive"
   IOS_EXPORT="$WORK_DIR/export-ios"
   EXPORT_OPTS="$WORK_DIR/ExportOptions-iOS.plist"
 
@@ -289,8 +295,8 @@ if $SIGN_IOS; then
   fi
 
   xcodebuild archive \
-    -project app/HelloApp.xcodeproj \
-    -scheme HelloApp-iOS \
+    -project app/App.xcodeproj \
+    -scheme App-iOS \
     -configuration Release \
     -destination 'generic/platform=iOS' \
     -archivePath "$IOS_ARCHIVE" \
@@ -314,7 +320,7 @@ if $SIGN_IOS; then
   IPA_SRC=$(find "$IOS_EXPORT" -maxdepth 2 -name "*.ipa" | head -1)
   [ -z "$IPA_SRC" ] && fail "exportArchive produced no .ipa in $IOS_EXPORT"
 
-  IPA_DEST="$REPO_ROOT/build/HelloApp-${VERSION}.ipa"
+  IPA_DEST="$REPO_ROOT/build/App-${VERSION}.ipa"
   cp "$IPA_SRC" "$IPA_DEST"
   shasum -a 256 "$IPA_DEST" > "$IPA_DEST.sha256"
   ok "$IPA_DEST"
@@ -328,7 +334,7 @@ fi
 if $SIGN_MACOS; then
   step "macOS archive (signed)"
 
-  MACOS_ARCHIVE="$WORK_DIR/HelloApp-macOS.xcarchive"
+  MACOS_ARCHIVE="$WORK_DIR/App-macOS.xcarchive"
   MACOS_EXPORT="$WORK_DIR/export-macos"
   EXPORT_OPTS_MACOS="$WORK_DIR/ExportOptions-macOS-AppStore.plist"
 
@@ -363,8 +369,8 @@ if $SIGN_MACOS; then
   fi
 
   xcodebuild archive \
-    -project app/HelloApp.xcodeproj \
-    -scheme HelloApp-macOS \
+    -project app/App.xcodeproj \
+    -scheme App-macOS \
     -configuration Release \
     -destination 'generic/platform=macOS' \
     -archivePath "$MACOS_ARCHIVE" \
@@ -469,7 +475,7 @@ if $SIGN_MACOS; then
   fi
   [ -z "$INSTALLER_CERT" ] && fail "Mac Installer Distribution cert not found in keychain — install one from developer.apple.com → Certificates → '+' → Mac Installer Distribution"
 
-  PKG_DEST="$REPO_ROOT/build/HelloApp-${VERSION}.pkg"
+  PKG_DEST="$REPO_ROOT/build/App-${VERSION}.pkg"
   with_timestamp_retry "productbuild .pkg" \
     productbuild --component "$EXPANDED_APP" /Applications \
     --sign "$INSTALLER_CERT" \
@@ -482,7 +488,7 @@ fi
 
 echo
 echo "✓ Release artifacts ready for $TAG"
-$SIGN_IOS   && echo "    iOS:   build/HelloApp-${VERSION}.ipa"
-$SIGN_MACOS && echo "    macOS: build/HelloApp-${VERSION}.pkg"
+$SIGN_IOS   && echo "    iOS:   build/App-${VERSION}.ipa"
+$SIGN_MACOS && echo "    macOS: build/App-${VERSION}.pkg"
 echo
 echo "Next: fastlane release uploads via pilot, then pushes the tag."
