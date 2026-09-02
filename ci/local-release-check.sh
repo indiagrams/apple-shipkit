@@ -136,15 +136,52 @@ MARKETING_VERSION="${RELEASE_MARKETING_VERSION:-$TAG_MARKETING}"
 BUILD_NUMBER="${RELEASE_BUILD_NUMBER:-${TAG_BUILD:-0}}"
 
 # Bundle id is required when building manual-signing ExportOptions plists
-# (provisioningProfiles dict maps bundle_id → profile name). Pulled from
-# project.yml's first PRODUCT_BUNDLE_IDENTIFIER line so it stays in sync
-# with the canonical source; overridable via RELEASE_BUNDLE_ID env.
+# (provisioningProfiles dict maps bundle_id → profile name). Read from
+# app/Identity.xcconfig's BUNDLE_ID — the one tracked identity source both
+# generators resolve — and overridable via RELEASE_BUNDLE_ID env.
+#
+# This used to grep app/project.yml's first PRODUCT_BUNDLE_IDENTIFIER line.
+# Since identity moved into the xcconfig, that line is the literal
+# `$(BUNDLE_ID)`, so the grep returned the unresolved REFERENCE as if it were a
+# value: the `-z` guard beside it could never fire, and on the manual-signing
+# path the string was written as the provisioningProfiles dict key, so
+# `exportArchive` failed only after a full signed archive. The Fastfile's
+# release lane was shielded only because it happens to pass RELEASE_BUNDLE_ID;
+# the direct invocation this script documents was not.
+#
+# The reader is `ruby bin/lib/xcconfig.rb` — the one xcconfig parser in this
+# repository, Ruby core only, no `bundle install`. It is called rather than
+# reimplemented because a shell reader of this format is exactly the thing that
+# keeps being written and keeps being wrong: an `awk`/`sed` capture that stops
+# at the first space or slash returns a bundle id correctly (they contain
+# neither) and truncates DISPLAY_NAME and COPYRIGHT. The parser reproduces
+# Xcode's semantics against fixtures observed with
+# `xcodebuild -showBuildSettings`: last assignment wins across `#include`
+# boundaries, `//` opens a comment at any position, `$(VAR)` is expanded.
 if [ -n "${RELEASE_BUNDLE_ID:-}" ]; then
   BUNDLE_ID="$RELEASE_BUNDLE_ID"
 else
-  BUNDLE_ID="$(grep -m 1 -E '^[[:space:]]+PRODUCT_BUNDLE_IDENTIFIER:' app/project.yml | awk -F': ' '{print $2}' | tr -d '" ')"
+  # The parser's exit codes are 0 value / 3 undefined-or-empty / 2 usage, and a
+  # broken `#include` or an unreadable path is a NAMED error at some other
+  # non-zero. Do not collapse them: being unable to tell "your include is
+  # broken" from "that key is empty" is the whole reason the parser exists.
+  # `&& X=0 || X=$?` and not `if !`, because `!` rewrites $? to 1 and would
+  # report every failure as 1.
+  BUNDLE_ID="$(ruby bin/lib/xcconfig.rb app/Identity.xcconfig BUNDLE_ID)" && XCCONFIG_EXIT=0 || XCCONFIG_EXIT=$?
+  case "$XCCONFIG_EXIT" in
+    0) ;;
+    3) fail "BUNDLE_ID is missing or empty in app/Identity.xcconfig — define it there (a value that is only a \`//\` comment is empty, as Xcode reads it), or set RELEASE_BUNDLE_ID to override" ;;
+    *) fail "could not read BUNDLE_ID from app/Identity.xcconfig: ruby bin/lib/xcconfig.rb exited ${XCCONFIG_EXIT}, which is NOT its exit-3 'undefined or empty' code — a broken #include, an unreadable path, or no ruby on PATH. Its own message is above." ;;
+  esac
 fi
-[ -z "$BUNDLE_ID" ] && fail "Could not determine BUNDLE_ID — set RELEASE_BUNDLE_ID env or check app/project.yml"
+# After the override branch too: RELEASE_BUNDLE_ID is operator input and can
+# itself carry an unresolved reference. An empty value or any `$(…)` is
+# rejected HERE, before any archive, rather than becoming a dict key that fails
+# after one.
+case "$BUNDLE_ID" in
+  ''|*'$('*)
+    fail "Could not determine BUNDLE_ID (got '${BUNDLE_ID}') — set RELEASE_BUNDLE_ID env or check BUNDLE_ID in app/Identity.xcconfig" ;;
+esac
 
 # ── Tag format check ──────────────────────────────────────────────────────────
 
