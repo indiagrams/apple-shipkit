@@ -15,7 +15,7 @@
 #         - nuke: delete + recreate the certs repo (PAT scope must be
 #           updated manually after; see G12 in CONTINUOUS-VALIDATION.md)
 #   5. Re-fork the smoketest from indiagrams/apple-shipkit
-#   6. Run bin/rename.sh with the chosen --generator
+#   6. Personalize (bin/rename.sh --email); identity is set by hand afterwards
 #   7. Run make bootstrap (toolchain), commit, push, set branch protection
 #   8. Materialize .bootstrap.env in the new clone, pre-filled with
 #      smoketest identity + Apple credentials (sourced from
@@ -216,13 +216,32 @@ echo "=== 5/8: re-fork smoketest from $TEMPLATE_REPO ==="
 [ -d "$CLONE_DIR" ] || { echo "expected clone at $CLONE_DIR but it's missing" >&2; exit 1; }
 echo "  fresh fork at $CLONE_DIR"
 
-# ─── 6. Rename + verify (with chosen generator) ───────────────────────────────
+# ─── 6. Personalize (identity is set by hand afterwards) ──────────────────────
+#
+# bin/rename.sh personalizes the contact address and the repository slug. It no
+# longer writes identity: the bundle id, product name, display name and
+# copyright are four values in app/Identity.xcconfig, edited by hand.
+#
+# Nothing is automated in their place here, deliberately. A freshly created
+# repository legitimately ships the template's placeholder identity, so a check
+# placed at this point would pass on a correct tree and on an incorrect one
+# alike — the pass condition met regardless of what it claims to detect. The
+# gap is named instead by gates that already run in the operator's next step:
+# `make doctor` reports the identity step blocked on template values, and
+# `make bootstrap-fork` refuses to continue past it.
 
-echo "=== 6/8: rename app stub (generator=$GENERATOR) ==="
+echo "=== 6/8: personalize contact address and slug (generator=$GENERATOR) ==="
 pushd "$CLONE_DIR" >/dev/null
-bin/rename.sh "$APP_NAME" "$BUNDLE_ID" "$DISPLAY_NAME" \
-  --email="$APP_EMAIL" --generator="$GENERATOR" 2>&1 | tail -3
-bin/verify-rename.sh
+bin/rename.sh --email="$APP_EMAIL" 2>&1 | tail -3
+if [ "$GENERATOR" = "tuist" ]; then
+  bin/switch-to-tuist.sh --force 2>&1 | tail -3
+fi
+echo
+echo "  NEXT, BY HAND, in $CLONE_DIR:"
+echo "    edit app/Identity.xcconfig — APP_PRODUCT_NAME, BUNDLE_ID, DISPLAY_NAME, COPYRIGHT"
+echo "    a repo created before that file existed migrates with:"
+echo "      ruby bin/migrate-identity.rb        # see docs/MIGRATING-FROM-RENAME.md"
+echo
 
 # ─── 7. Toolchain + initial push + branch protection ──────────────────────────
 

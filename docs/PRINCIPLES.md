@@ -74,8 +74,9 @@ first and let's talk.
     deprecation note in CHANGELOG one minor release before deletion. Users
     of `gh repo create --template` should be able to skim the CHANGELOG and
     know what to update.
-13. **`bin/rename.sh` outputs a buildable project.** Always. If a rename
-    produces a project that can't `make check` green, that's a P0 bug.
+13. **Personalization and migration output a buildable project.** Always.
+    If `bin/rename.sh` or `bin/migrate-identity.rb` produces a project that
+    can't `make check` green, that's a P0 bug.
 
 ## Security
 

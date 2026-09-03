@@ -37,6 +37,8 @@ Once `.bootstrap.env` is filled in (see [Getting Started](docs/GETTING-STARTED.m
 
 Returning forkers running their second-or-later ship typically use just `make ship` (subset of `make all`) plus `make submit` when they want to push the build past TestFlight.
 
+**Forked before `app/Identity.xcconfig` existed?** Your fork's identity was written into the tree by a `bin/rename.sh` that no longer does that. `ruby bin/migrate-identity.rb` reads what your build currently resolves, writes it into `app/Identity.xcconfig`, and puts the project structure back on the constant `App` that every generator, workflow and script now spells. It refuses on a dirty tree, tells you which of the three states it found, and rolls the whole tree back if any step fails. **It changes your built executable's filename** — read [docs/MIGRATING-FROM-RENAME.md](docs/MIGRATING-FROM-RENAME.md) before running it, especially if your app is already on the App Store.
+
 **Adopting an existing live App Store app?** Run `make adopt` ONCE after filling `.bootstrap.env` and BEFORE `make submit` — pulls existing ASC metadata + screenshots into the local tree so the first submit ships YOUR real listing, not template placeholders. See [docs/ADOPTING-EXISTING-APP.md](docs/ADOPTING-EXISTING-APP.md).
 
 ---
@@ -87,7 +89,7 @@ The five-command journey hides:
 
 ### Fork extensibility (added 2026-05; v1.6.1)
 - **`fastlane/Fastfile.local` extension point** — forks add custom lanes (Slack hook, Crashlytics dSYM upload, Firebase App Distribution, internal-ticket bumps) in a fork-owned file that survives upstream syncs. Template Fastfile imports it at EOF; `after_all` and `error` are reserved for forks, `before_all` is template-claimed. See [`fastlane/Fastfile.local.example`](fastlane/Fastfile.local.example) for seven copy-pasteable patterns.
-- **Env-driven Fastfile constants** — `APP_NAME`, `APP_IDENTIFIER`, and downstream `IOS_SCHEME` / `MACOS_SCHEME` / `IPA_NAME_PATTERN` / `PKG_NAME_PATTERN` all resolve from `.bootstrap.env` at lane-resolution time, with `ENV` override for CI. Forks no longer sed-substitute Fastfile literals during rename; the file stays byte-equivalent across template and every fork.
+- **Env-driven Fastfile constants** — `APP_NAME`, `APP_IDENTIFIER`, and downstream `IOS_SCHEME` / `MACOS_SCHEME` / `IPA_NAME_PATTERN` / `PKG_NAME_PATTERN` all resolve from `.bootstrap.env` at lane-resolution time, with `ENV` override for CI. Forks never sed-substitute Fastfile literals; the file stays byte-equivalent across template and every fork.
 - **Constant project structure, identity in one xcconfig** — `pr.yml`, `ci/local-check.sh`, the Snapfiles and the Fastfile spell `app/App.xcodeproj` and `App-iOS` / `App-macOS` outright; nothing resolves a project path from a variable. The app's bundle id, product name, display name and copyright live in `app/Identity.xcconfig`, and the Team ID in gitignored `app/Local.xcconfig`. The workflow file stays byte-equivalent across template and forks for safe `cp`-mirror.
 - **Fork-friendly CI timeouts** — `pr.yml` job-level cap 60min (was 15); test steps inherit the job cap so a fork's 30-min test suite doesn't hit a template-tuned ceiling. Infrastructure-only steps (build, simulator pre-boot) keep tight bounds so stuck infrastructure fails fast without constraining user test duration.
 - **Single Sat 07:00 UTC canary cron** in [`canary-trigger.yml`](.github/workflows/canary-trigger.yml) — orchestrates three sequential ships (CI xcodegen → CI tuist → local-mode). Forks inherit no cron (the trigger file is template-only); each fork wires its own schedule when ready.
@@ -174,7 +176,7 @@ Each step is its own fastlane lane in `fastlane/Fastfile`. Read the file — it'
 │   ├── bootstrap-doctor-matrix.yml  # weekly doctor sweep across 4 cells
 │   ├── canary-trigger.yml       # weekly CI-mode ship-validation (template-only; no-op on forks)
 │   ├── canary-local-mode.yml    # weekly local-mode ship-validation (cron commented; forks opt in)
-│   └── verify-rename.yml        # gate: rename script integrity
+│   └── migrate.yml              # gate: the rename→config migration, end to end
 ├── Brewfile                     # xcodegen + tuist + fastlane + lefthook + swiftlint + swiftformat
 ├── Makefile                     # init | doctor | bootstrap | bootstrap-fork | ship | verify | submit | screenshots | …
 ├── lefthook.yml                 # pre-push: ci/local-check.sh --fast
@@ -186,7 +188,8 @@ Each step is its own fastlane lane in `fastlane/Fastfile`. Read the file — it'
 │   ├── verify-testflight.rb     # `make verify` driver
 │   ├── adopt.rb                 # `make adopt` driver (existing-app forks)
 │   ├── lib/bootstrap.rb         # the orchestration framework (18-step pipeline)
-│   ├── rename.sh                # write your identity into app/Identity.xcconfig (+ docs, metadata)
+│   ├── rename.sh                # personalize contact address + repo slug (identity is edited by hand)
+│   ├── migrate-identity.rb      # one-time: a pre-Identity.xcconfig fork → the config-based scheme
 │   ├── switch-to-tuist.sh       # one-way XcodeGen → Tuist switch
 │   ├── setup-github.sh          # branch protection + squash-only + required checks
 │   ├── preflight.sh             # check developer-tool prerequisites

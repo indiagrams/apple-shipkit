@@ -1,0 +1,129 @@
+name: migrate
+
+# Non-required workflow: integration self-test for the rename→config migration
+# (bin/migrate-identity.rb + ci/test-migrate-identity.sh). It is the
+# successor to the retired rename self-test workflow, deleted in the same change
+# along with the three shell harnesses it drove. This is now the only workflow
+# covering the identity path.
+#
+# NOT a merge gate. Measured read-only on 2026-09-03 with
+#   gh api repos/indiagrams/apple-shipkit/branches/main/protection \
+#     --jq '.required_status_checks.contexts'
+# the live `main` protection array is EIGHT contexts — app (iOS device),
+# app (iOS Simulator), app (Tuist iOS device), app (Tuist iOS Simulator),
+# app (macOS), app (Tuist macOS), swiftlint, swiftformat — and this job's name
+# is deliberately not among them, exactly as the retired rename self-test's was
+# not. This is a visible signal, not a gate. It builds two real apps on
+# macos-15 and would put a multi-minute macOS cell on every PR that touched
+# the migration; the paths filter below is what keeps it off the others.
+#
+# If a later decision makes it required, the ONLY safe writer is
+# bin/setup-github.sh's read-append-assert path. NEVER
+# `PUT /protection`: that endpoint is collection-valued and REPLACES the array
+# rather than merging into it — a change written that way would have cut `main` from nine
+# required checks to one that way. Note also that the job `name:` string IS the
+# status-check context, so renaming a required job
+# silently un-requires it.
+
+on:
+  pull_request:
+    branches: [main, master]
+    # The CURRENT migration surface. Deliberately NOT inherited from the retired
+    # rename self-test workflow: its filter named only files this change deleted,
+    # and a filter naming only deleted paths is a job that never fires.
+    paths:
+      - bin/migrate-identity.rb
+      # test/migrate_identity_test.rb is what makes the command's destination pin
+      # falsifiable: its fixture xcodebuild REFUSES a -showBuildSettings that arrives
+      # unpinned. A filter that could not see this file would let that gate be
+      # weakened while this job never fired.
+      - test/migrate_identity_test.rb
+      - ci/test-migrate-identity.sh
+      - .github/workflows/migrate.yml
+      - app/project.yml
+      - app/Project.swift
+      - app/Identity.xcconfig
+      - bin/preflight-identity.rb
+      - bin/lib/xcconfig.rb
+
+# Least-privilege token. This job reads history and builds; it writes nothing.
+permissions:
+  contents: read
+
+# Cancel stale runs on a new push to the same ref — the convention every other
+# workflow in this repository uses.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migrate:
+    name: migrate self-test
+    runs-on: macos-15
+    # Measured basis, so the number can be corrected rather than guessed at:
+    #   * the whole script, end to end, locally: 26s wall clock (measured
+    #     2026-09-03, warm caches, Xcode 26.1.1, macOS test scoped to the unit
+    #     bundle). CI runs the FULL macOS scheme, which is more.
+    #   * iOS device build: pr.yml's own comment records "typical ~40s; 5m
+    #     absorbs cold caches" for the same command on this runner image.
+    #   * `brew install xcodegen`: ASSUMPTION A2 — inherited from the 5-minute
+    #     budget the retired rename self-test workflow allowed for the same
+    #     install, NOT timed on macos-15. Read the first run's timing and correct
+    #     this number.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 212b489 — the last commit before identity became a slot, re-renamed on
+        #           the fly by the pinned bin/rename.sh blob. ONE cell, because
+        #           this repository has no already-renamed commit to serve as a
+        #           ground-truth second arm: it is the thing being forked, and
+        #           nothing in its history was ever renamed away from HelloApp.
+        #           A fork does have such a commit; the limit is stated in
+        #           ci/test-migrate-identity.sh's header rather than left to be
+        #           inferred from a matrix with one cell in it.
+        fixture: [212b489]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # FULL HISTORY. ci/test-migrate-identity.sh builds its fixture from
+          # 212b489, an ancestor of origin/main; actions/checkout defaults to
+          # depth 1 and structurally cannot see it. A shallow checkout here
+          # does not make the test fail, it makes it impossible.
+          #
+          # THIS LINE IS NOT THE GATE. It is a config line anybody can delete
+          # with nothing going red, so ci/test-migrate-identity.sh asserts
+          # `git rev-parse --is-shallow-repository` = false itself, and asserts
+          # that the fixture commit resolves, at step 1/21 — before it clones
+          # anything. Deleting this line therefore breaks the job LOUDLY instead
+          # of silently blinding the test. Same discipline as
+          # release.yml:156 and canary-local-mode.yml:165.
+          fetch-depth: 0
+
+      # Already in Brewfile and .tool-versions, and the retired rename self-test
+      # workflow installed it too; not a new registry dependency. xcbeautify is
+      # deliberately NOT installed: the script runs the same xcodebuild command
+      # unformatted when the formatter is absent, so a missing formatter can
+      # never turn into a skipped build.
+      - name: install xcodegen
+        run: brew install xcodegen
+
+      # A STEP IN THIS JOB, deliberately not a job of its own: a new job would be a
+      # status context nothing requires, and an unrequired context runs, reports and
+      # blocks nothing. It runs BEFORE the end-to-end because it takes seconds where
+      # that takes minutes, and because the two ask different questions — this one
+      # drives the command against stub xcodebuild/xcodegen binaries and can therefore
+      # assert the REFUSALS, including that the settings dump arrives
+      # destination-pinned, while the end-to-end builds a real fixture and reads a
+      # real artefact. Ruby-core only, and it sets a git identity per command with
+      # `-c user.email` rather than relying on the runner's global config.
+      - name: run test/migrate_identity_test.rb (the command's unit contract)
+        run: ruby test/migrate_identity_test.rb
+
+      - name: run ci/test-migrate-identity.sh
+        env:
+          FIXTURE_REF: ${{ matrix.fixture }}
+          # MIGRATE_MACOS_ONLY_TESTING is deliberately NOT set. CI is the
+          # arbiter for the macOS UI-test target, and the Gatekeeper dialog that
+          # knob exists for is a local-desktop problem, not a runner one.
+        run: bash ci/test-migrate-identity.sh

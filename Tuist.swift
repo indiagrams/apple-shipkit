@@ -3,7 +3,7 @@
 // Lives at repo root (Tuist 4 default; pre-4.0 used Tuist/Config.swift).
 // Companion to app/Project.swift; both ship alongside app/project.yml so
 // forkers can pick their generator at fork time via
-//   bin/rename.sh ... --generator=tuist|xcodegen
+//   bin/switch-to-tuist.sh / bin/switch-to-xcodegen.sh
 // Default remains XcodeGen — see docs/MIGRATING-TO-TUIST.md and #38.
 //
 // compatibleXcodeVersions: .all is intentional. .upToNextMajor("15.0")
