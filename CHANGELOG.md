@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Bootstrap::LocalSigningTeam` — **`make bootstrap-fork` writes your Apple Team ID into the gitignored `app/Local.xcconfig`**, from `FASTLANE_TEAM_ID` in `.bootstrap.env`. `bin/rename.sh --team-id=…` used to write that file and is retired in the same release; without this step the value would have no writer at all, and every fresh fork would meet the gap at its first signed build.
+
+  It refuses BY NAME rather than writing a blank. An absent file and an empty `DEVELOPMENT_TEAM` are not the same thing: with the file absent no `DEVELOPMENT_TEAM` line appears in `xcodebuild -showBuildSettings` and iOS signing fails loudly, while an EMPTY value lets a macOS build SUCCEED with an ad-hoc signature and say nothing. A writer that defaulted to blank would turn a loud failure into a silent wrong one.
+
+  It also refuses to OVERWRITE a `DEVELOPMENT_TEAM` that disagrees with `FASTLANE_TEAM_ID`, naming both values. The build reads one and fastlane reads the other; a divergence is a finding rather than something to resolve by guessing, so it is reported instead of overwritten.
+
 - `app/Identity.xcconfig` + `bin/preflight-identity.rb` + `ci/check-identity.sh` — **the app's identity is a slot the build reads, not a literal the template spells.** The bundle id, product name, display name and copyright are the four values in one tracked xcconfig; `app/project.yml` attaches it through `configFiles:` and `app/Project.swift` through `.settings(configurations:)`, and every identity setting in both manifests is a `$(VAR)` reference into it. Nothing derives a path from a value in that file.
 
   The Apple Team ID is not identity, it is per-clone signing configuration, and it now has a place that is not a tracked file: `Identity.xcconfig` ends in `#include? "Local.xcconfig"`, and `app/Local.xcconfig` — gitignored, carrying `DEVELOPMENT_TEAM` alone — is what `bin/rename.sh --team-id=…` and `make bootstrap-fork` write. The include is silent when the file is absent; the named failure comes from `ruby bin/preflight-identity.rb --require-team` (exit 4, naming `DEVELOPMENT_TEAM` and the file), because Xcode's own message on iOS names neither and on macOS is nothing at all — the build succeeds ad-hoc signed.

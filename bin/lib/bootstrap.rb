@@ -24,6 +24,12 @@ require "securerandom"
 require "shellwords"
 require "tmpdir"
 
+# The ONE xcconfig reader. `LocalSigningTeam` below reads app/Local.xcconfig back
+# through it rather than hand-rolling a fourth parser — which is the defect that
+# file was introduced to fix. It has zero requires of its own, so this adds no
+# dependency: `bundler-cache: false` jobs stay honest.
+require_relative "xcconfig"
+
 module Bootstrap
   REPO_ROOT = Pathname.new(__dir__).join("..", "..").expand_path
   ENV_FILE  = REPO_ROOT.join(".bootstrap.env")
@@ -565,6 +571,163 @@ module Bootstrap
     end
   end
 
+
+  # The Apple Team ID, from `.bootstrap.env` into the gitignored file the build reads.
+  #
+  # WHY THIS STEP EXISTS. `bin/rename.sh` used to write `app/Local.xcconfig` from
+  # `--team-id`. That flag is retired in this same change, because a Team ID is
+  # per-clone signing configuration rather than the per-fork personalization the
+  # script is now scoped to — and retiring it leaves the value with NO writer at all.
+  # Measured before it was written down, with a positive control so that a zero is a
+  # measured zero rather than a predicate that cannot see: after the retirement,
+  # `bin/lib/bootstrap.rb` names `Local.xcconfig` ZERO times (grep exit 1, the only
+  # exit that means absence) while the same expression finds 19 occurrences in the
+  # pre-retirement `bin/rename.sh`. Every fresh fork would meet that gap at its first
+  # signed build.
+  #
+  # AN EMPTY WRITE WOULD BE WORSE THAN NO WRITE, which is why every path below refuses
+  # by name instead. An UNDEFINED `DEVELOPMENT_TEAM` and an EMPTY one are different
+  # things, measured with `xcodebuild -showBuildSettings -target` rather than assumed:
+  # with the file absent NO `DEVELOPMENT_TEAM` line appears in the dump at all (macOS
+  # additionally reports `_DEVELOPMENT_TEAM_IS_EMPTY = YES`), and iOS signing then
+  # fails by name; with the value EMPTY a macOS build SUCCEEDS with an ad-hoc
+  # signature and says nothing at all. A writer that defaults to blank would convert a
+  # loud failure into a silent wrong one.
+  #
+  # AND IT REFUSES TO OVERWRITE. `bin/migrate-identity.rb` already declines to
+  # overwrite a Team ID a forker put there by hand, and the two keys are meant to hold
+  # the same value: the build reads `DEVELOPMENT_TEAM` here, fastlane reads
+  # `FASTLANE_TEAM_ID` from `.bootstrap.env`. A divergence between them is a finding,
+  # not an inconvenience, so this step surfaces it and declines to choose — which
+  # makes it a drift check as well as a writer.
+  class LocalSigningTeam < Step
+    # The key inside the gitignored file, and the key in `.bootstrap.env` it comes
+    # from. Two names for one value, which is exactly why the comparison below is
+    # worth making.
+    TEAM_KEY   = "DEVELOPMENT_TEAM"
+    SOURCE_KEY = "FASTLANE_TEAM_ID"
+    LOCAL_PATH = "app/Local.xcconfig"
+
+    # Ten upper-case alphanumerics — Apple's own format, and the shape
+    # docs/APPLE-PREREQS.md tells a forker to expect. Anchored at both ends: an
+    # unanchored match would accept `Team ID: ABCDE12345` and write the whole string,
+    # and a stray space is what a pasted line or an unstripped inline comment leaves
+    # behind.
+    TEAM_ID_SHAPE = /\A[A-Z0-9]{10}\z/
+
+    # Written above the assignment so a forker who opens the file knows what put it
+    # there and that it must stay out of git.
+    HEADER = "// This clone's Apple signing team — written by `make bootstrap-fork` from\n" \
+             "// #{SOURCE_KEY} in .bootstrap.env. Gitignored and never tracked. Delete it and\n" \
+             "// the build resolves no team at all; empty it and a macOS build silently\n" \
+             "// succeeds with an ad-hoc signature instead.\n"
+
+    def name; "Signing team present (#{LOCAL_PATH})"; end
+
+    # THE ONE PATH RESOLVER for this step; `check` and `do_it` both go through it, so
+    # a second resolver cannot let one of the two drift out of coverage.
+    def local_xcconfig_path
+      REPO_ROOT.join(LOCAL_PATH)
+    end
+
+    def team_id
+      config[SOURCE_KEY].to_s.strip
+    end
+
+    # nil when the configured value is usable; a NAMED refusal otherwise. One method,
+    # so `check`'s blocked message and `do_it`'s exception cannot drift apart.
+    def refusal
+      id = team_id
+      if id.empty?
+        return "#{SOURCE_KEY} is absent or empty in .bootstrap.env, so there is no Apple Team ID " \
+               "to write into #{LOCAL_PATH}. Writing an empty #{TEAM_KEY} would be worse than " \
+               "writing nothing: an absent file leaves the setting UNDEFINED and iOS signing " \
+               "fails by name, while an EMPTY value lets a macOS build succeed with an ad-hoc " \
+               "signature and say nothing. Fill #{SOURCE_KEY} — ten upper-case letters and " \
+               "digits, from https://developer.apple.com/account under Membership Details — and " \
+               "re-run."
+      end
+      unless TEAM_ID_SHAPE.match?(id)
+        return "#{SOURCE_KEY} = #{id.inspect} in .bootstrap.env is not an Apple Team ID: they are " \
+               "exactly ten upper-case letters and digits (/#{TEAM_ID_SHAPE.source}/). Nothing was " \
+               "written to #{LOCAL_PATH} — a malformed value in there resolves into the build as " \
+               "itself and fails later with Apple's message rather than this one."
+      end
+      nil
+    end
+
+    def check
+      reason = refusal
+      return [:blocked, reason] unless reason.nil?
+
+      path = local_xcconfig_path
+      unless path.file?
+        return [:pending, "#{LOCAL_PATH} is missing; `make bootstrap-fork` writes it from " \
+                          "#{SOURCE_KEY}. It is gitignored and never committed."]
+      end
+
+      # Read back through the ONE parser — the same one `#include?` and
+      # `bin/preflight-identity.rb --require-team` resolve through. `own` rather than
+      # `value` because this file has no includes of its own and following them would
+      # answer a different question. A text compare would pass on a file whose value
+      # the parser cannot actually see: `KEY = // disabled` satisfies a presence regex
+      # and resolves to nothing.
+      current = Xcconfig.own(path.to_s)[TEAM_KEY].to_s.strip
+      if current.empty?
+        return [:pending, "#{LOCAL_PATH} exists but assigns no #{TEAM_KEY} that resolves to a " \
+                          "value; `make bootstrap-fork` appends it from #{SOURCE_KEY}."]
+      end
+
+      unless current == team_id
+        return [:blocked, "#{LOCAL_PATH} assigns #{TEAM_KEY} = #{current.inspect} while " \
+                          ".bootstrap.env's #{SOURCE_KEY} says #{team_id.inspect}. These are the " \
+                          "two halves of one identity — the build reads the first, fastlane reads " \
+                          "the second — and this step will not choose between them. Reconcile the " \
+                          "two and re-run; nothing was written."]
+      end
+
+      :done
+    end
+
+    def do_it
+      reason = refusal
+      raise reason unless reason.nil?
+
+      path = local_xcconfig_path
+      # UTF-8 PINNED, AND THIS ONE IS LOAD-BEARING — measured, not inherited. A forker's
+      # own file may legitimately carry a non-ASCII byte in a comment (an accented org
+      # name, a smart quote, a dash). Read without the pin on a machine where LANG and
+      # LC_ALL are unset, those bytes arrive tagged US-ASCII and the append below raises
+      # `Encoding::CompatibilityError: incompatible character encodings` out of the very
+      # first `+=`. Driven both ways, and the crash needs the non-ASCII bytes AND the
+      # missing locale — either alone is green.
+      #
+      # Worth stating precisely, because the opposite is easy to assume: the WRITE does
+      # not need this. Ruby emits a String's own bytes and does not transcode to
+      # `Encoding.default_external`, so an unpinned write of non-ASCII raises nothing.
+      # It is the READ that bites.
+      existing = path.file? ? File.read(path.to_s, encoding: "UTF-8") : nil
+      current  = existing.nil? ? "" : Xcconfig.own(path.to_s)[TEAM_KEY].to_s.strip
+
+      if !current.empty? && current != team_id
+        raise "#{LOCAL_PATH} already assigns #{TEAM_KEY} = #{current.inspect} while #{SOURCE_KEY} " \
+              "says #{team_id.inspect}. This step will not overwrite a Team ID somebody else put " \
+              "there — reconcile the two and re-run."
+      end
+      return if current == team_id
+
+      # APPEND, never truncate. This is the forker's own per-clone file and may carry
+      # settings that are none of this step's business.
+      body  = existing.to_s
+      body += "\n" unless body.empty? || body.end_with?("\n")
+      body += "\n" unless body.empty?
+      body += HEADER
+      body += "#{TEAM_KEY} = #{team_id}\n"
+
+      FileUtils.mkdir_p(path.dirname)
+      File.write(path.to_s, body, encoding: "UTF-8")
+    end
+  end
 
   class BrewBootstrap < Step
     def name; "Toolchain (brew + bundler + xcodegen/tuist + lefthook)"; end
@@ -1523,6 +1686,7 @@ module Bootstrap
       RemoteMatches,
       Personalize,
       IdentityAdopted,
+      LocalSigningTeam,      # the Team ID reaches the build; refuses rather than writing blank
       BrewBootstrap,
       Icon1024,              # tree mutations land before InitialPush
       MakeIcons,

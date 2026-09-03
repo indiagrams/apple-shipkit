@@ -246,9 +246,9 @@ if require_team
       # that should have defined it. This one does.
       state = File.exist?(local) ? "present but does not define #{TEAM_VAR} with a non-empty value" : "not found"
       fail_with 4, "#{TEAM_VAR} is unresolvable: app/Local.xcconfig (#{local}) is #{state}. " \
-                   "Create app/Local.xcconfig (gitignored) containing `#{TEAM_VAR} = <your Team ID>`. " \
-                   "It is per-clone signing configuration rather than per-fork identity, so no " \
-                   "script writes it for you. " \
+                   "`make bootstrap-fork` writes app/Local.xcconfig (gitignored) from " \
+                   "FASTLANE_TEAM_ID in .bootstrap.env; on a clone that has not run it, create it " \
+                   "by hand containing `#{TEAM_VAR} = <your Team ID>`. " \
                    "Note that Xcode would not report this on macOS (the build succeeds with an ad-hoc signature)."
     end
   end
