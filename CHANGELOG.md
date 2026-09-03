@@ -45,6 +45,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `bin/refork-smoketest.sh` — added `--skip-cert-revoke` to skip step 2's team-wide "revoke all `Created via API` certs" residue cleanup. That step is safe only when the smoketest owns its Apple team alone; once the team is **shared** (e.g. the canary reforked onto the Indiagram LLC account alongside a real app), a blanket revoke would kill the co-tenant's API-minted certs — verified against the LLC, where an `Apple Development: Created via API` cert belonging to another app would have matched the filter. With the flag, step 2 no-ops (the canary mints + revokes its own certs each run, and a shared team has no smoketest residue to clean anyway).
 
+### Added
+
+- **`ci/check-shell.sh` — `bash -n` + ShellCheck over every tracked shell script, on every PR.** This template's release path is shell: `ci/local-release-check.sh` alone is ~470 lines of signing, packaging and re-signing. Nothing in CI executed any of it. The `app (...)` cells build the app; they never source `bin/rename.sh` or run the ship path, so **a PR that broke a shell script outright merged green** and failed later, on somebody's release.
+
+  `bash -n` is the floor — a script that cannot be parsed should never reach main. ShellCheck at `warning` catches the tier above it, the constructs that run but do the wrong thing. It found 7 on first run, all now fixed:
+
+  | code | where | why it matters |
+  |---|---|---|
+  | SC2164 ×2 | `ci/check-app-icon.sh`, `ci/check-identity.sh` | `cd "$(dirname "$0")/.."` with no `|| exit`. In a **guard**, a failed `cd` means the script keeps going in the wrong directory and then passes files that are not the ones it exists to check |
+  | SC1087 ×3 | `bin/rename.sh`, `ci/test-rename.sh` ×2 | `$var[[:space:]]` parses as array indexing, not "expand, then a literal bracket" |
+  | SC2046 ×1 | `ci/local-release-check.sh` | `$($PATCH_MACOS_PLIST && echo "" || echo …)` unquoted. Rewritten to the `${ARR[@]+"${ARR[@]}"}` idiom the two lines above it already use, so the "pass nothing" branch is zero arguments rather than one empty one |
+  | SC2088 ×1 | `bin/refork-smoketest.sh` | false positive — a tilde in an error *message*. Suppressed with the reason inline rather than reworded |
+
+  Severity is capped at `warning` on purpose. `info`/`style` (19 remaining) are reported each run for visibility but never fail: they are dominated by SC2012 and SC1091, neither a defect here, and a gate that cries wolf gets switched off.
+
+  `ci/lib/` is covered via `shellcheck -s bash` rather than exempted. Those are sourced libraries with no shebang, pinned byte-for-byte by `ci/lib/SHA256SUMS` across this template **and every consumer** — so adding a `# shellcheck shell=bash` directive would force a re-pin in every downstream repo for the sake of a comment. Passing the shell on the command line gets identical coverage and touches nothing.
+
+  Mutation-verified rather than assumed: a deliberate syntax break fails it, reintroducing the `cd` bug fails it, and removing shellcheck from `PATH` fails it instead of skipping. It also caught a defect **in its own header** on first run — prose wrapped so a line began `# shellcheck`, which ShellCheck reads as a malformed directive. Wired as pr.yml's `shell scripts` job (ubuntu, seconds, no paths filter) and into `ci/local-check.sh` on the pre-push path; `shellcheck` added to the Brewfile.
+
 ### Fixed
 
 - **`deliver` rewrote `demo_account_required` from credentials it was never given, and `bin/submit.rb` let it.** `review_information()` strips every review field and omits the empty ones from its `appStoreReviewDetail` PATCH — correct, and precisely what the Fastfile's `" "` sentinel depends on to keep the `+10000000000` phone placeholder from reaching Apple. But it then finishes with an `else` branch that **writes** `demo_account_required = false` rather than omitting it, deriving the flag from the two values it had just decided not to send.

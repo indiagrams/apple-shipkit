@@ -174,9 +174,9 @@ test ! -f "app/Shared/$TEST_APP.swift" || fail "app/Shared/$TEST_APP.swift was c
 ok "constant structure intact (App.swift, App.entitlements x2, App*Tests.swift)"
 
 # Identity landed in the xcconfig, and the Team ID did not land in a tracked file
-grep -qE "^[[:space:]]*APP_PRODUCT_NAME[[:space:]]*=[[:space:]]*$TEST_APP[[:space:]]*$" app/Identity.xcconfig || \
+grep -qE "^[[:space:]]*APP_PRODUCT_NAME[[:space:]]*=[[:space:]]*${TEST_APP}[[:space:]]*$" app/Identity.xcconfig || \
   fail "app/Identity.xcconfig: APP_PRODUCT_NAME is not '$TEST_APP'"
-grep -qE "^[[:space:]]*BUNDLE_ID[[:space:]]*=[[:space:]]*$TEST_BUNDLE[[:space:]]*$" app/Identity.xcconfig || \
+grep -qE "^[[:space:]]*BUNDLE_ID[[:space:]]*=[[:space:]]*${TEST_BUNDLE}[[:space:]]*$" app/Identity.xcconfig || \
   fail "app/Identity.xcconfig: BUNDLE_ID is not '$TEST_BUNDLE'"
 grep -qF "DISPLAY_NAME     = $TEST_DISPLAY" app/Identity.xcconfig || \
   fail "app/Identity.xcconfig: DISPLAY_NAME is not '$TEST_DISPLAY'"
