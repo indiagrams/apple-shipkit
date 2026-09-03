@@ -30,7 +30,9 @@
 #   -----+------------------------------------------------------+---------------------------------------------
 #   0    | every required variable present and non-empty        | — (prints `identity preflight ok`)
 #   1    | unknown or malformed argv                            | the offending argument and the usage line
-#   2    | app/Identity.xcconfig not found                      | the resolved absolute path and the CWD
+#   2    | app/Identity.xcconfig not found, or present but not | the resolved absolute path and the CWD;
+#        | resolvable because a hard `#include` in it is missing | for an include, the include and where it
+#        | or the includes cycle                                | was looked for
 #   3    | one or more required variables missing or empty      | every missing variable, comma-separated
 #   4    | --require-team given and the team is unresolvable    | DEVELOPMENT_TEAM and app/Local.xcconfig
 #
@@ -44,8 +46,36 @@
 #   ruby bin/preflight-identity.rb --require-team   # additionally require a resolvable DEVELOPMENT_TEAM
 #   ruby bin/preflight-identity.rb --config PATH    # check PATH instead of app/Identity.xcconfig (fixtures only)
 #
-# Ruby stdlib only. No gem, no Gemfile entry, no `require` at all, so it runs
-# on a bare runner before `bundle install`.
+# WHY THE VALUE COMES FROM bin/lib/xcconfig.rb AND NOT FROM A PREDICATE HERE
+#
+# This file used to decide "non-empty" with an anchored `=[ \t]*\S` match. In
+# xcconfig `//` opens a comment at ANY position in a value, so
+# `BUNDLE_ID = // temporarily disabled` resolves to the empty string in Xcode —
+# the key is absent from -showBuildSettings entirely — while that predicate
+# matched the first `/` and this gate exited 0. It accepted the exact input it
+# exists to refuse, reached by the most natural way of disabling a line.
+#
+# The fix is not a tighter predicate. `//` is one of half a dozen xcconfig
+# rules a reader has to get right, and ci/local-release-check.sh needs the
+# VALUE rather than a yes/no, so a predicate here would have left that script
+# with a reader of its own. bin/lib/xcconfig.rb is the single body both call,
+# and its rows were measured against `xcodebuild -showBuildSettings` rather
+# than against either caller. It also does two things the predicate could not:
+# it follows `#include?`, so a variable supplied by an included file counts,
+# and it distinguishes "never assigned" from "assigned but empty" — this gate
+# treats both as missing, which is what the predicate did.
+#
+# Ruby stdlib only. No gem, no Gemfile entry, and exactly one `require`-family
+# line — `require_relative "lib/xcconfig"`, a relative load of a sibling file
+# in this repository which itself has ZERO `require` lines, not even a stdlib
+# one (test/xcconfig_test.rb asserts that, so it cannot rot). Nothing outside
+# Ruby core is loaded on any path, so this still runs on a bare runner before
+# `bundle install`.
+
+# The single load. `__dir__`-relative, so it resolves the same from the
+# repository root (CI), from app/ (XcodeGen's preGenCommand) and from anywhere
+# else a caller happens to stand.
+require_relative "lib/xcconfig"
 
 # Paths are resolved from __dir__, never from the CWD. XcodeGen's preGenCommand
 # runs with CWD = app/ (both `cd app && xcodegen generate` and
@@ -81,22 +111,6 @@ USAGE
 def fail_with(code, message)
   warn "#{FAIL_PREFIX} #{message}"
   exit code
-end
-
-# Pin UTF-8 rather than inheriting the locale. With LANG unset — a bare
-# container, `env -i`, launchd — Ruby's default external encoding is US-ASCII
-# and the © in COPYRIGHT raises ArgumentError out of the regex match instead
-# of producing a verdict.
-def read_utf8(path)
-  File.read(path, encoding: "UTF-8")
-end
-
-# Anchored, non-empty-value match. Regexp.escape so a key name can never be
-# read as a pattern. The trailing \S is load-bearing: `BUNDLE_ID =` with
-# nothing after the equals sign must NOT match, because that is precisely the
-# case Xcode silently treats as the empty string.
-def defines_non_empty?(text, key)
-  text.match?(/^[ \t]*#{Regexp.escape(key)}[ \t]*=[ \t]*\S/)
 end
 
 # --- argv -------------------------------------------------------------------
@@ -158,11 +172,29 @@ unless File.exist?(config)
 end
 
 # --- exit 3: a required variable is missing or present-but-empty -------------
+# `Xcconfig.value` returns nil for a key that was never assigned and "" for one
+# that is assigned but empty, comment-only, or resolving through undefined
+# references to nothing. A gate treats both as missing.
+#
 # Collect every miss before reporting, so one run names all of them rather
 # than only the first.
 
-identity_text = read_utf8(config)
-missing = REQUIRED_VARS.reject { |key| defines_non_empty?(identity_text, key) }
+begin
+  missing = REQUIRED_VARS.reject do |key|
+    value = Xcconfig.value(config, key)
+    !value.nil? && !value.empty?
+  end
+rescue Xcconfig::MissingInclude => e
+  # A hard `#include` that is not there, or an include cycle. The parser raises
+  # rather than returning what it managed to read, deliberately: "your include
+  # is broken" must never arrive as "that key is empty". So it maps onto exit 2
+  # — the config could not be READ — and never onto exit 3, and a caller
+  # branching on the code is not told a variable is missing from a file that
+  # was never resolvable in the first place. Xcode refuses this file too.
+  fail_with 2, "#{config} could not be resolved: #{e.message}. " \
+               "Fix the #include, or make it optional (`#include?`, which is silent when the " \
+               "file is absent), before generating."
+end
 
 unless missing.empty?
   fail_with 3, "#{config} is missing required variable(s): #{missing.join(", ")}. " \
@@ -171,23 +203,41 @@ unless missing.empty?
 end
 
 # --- exit 4: --require-team and the team does not resolve --------------------
-# The team is resolved the way the build resolves it — from the RESOLVED set,
-# not from Identity.xcconfig alone. Local.xcconfig is the sibling of whichever
-# config is being checked (app/Local.xcconfig by default), which is exactly what
-# `#include? "Local.xcconfig"` in Identity.xcconfig will read.
+# Local.xcconfig is the sibling of whichever config is being checked
+# (app/Local.xcconfig by default), which is exactly the file
+# `#include? "Local.xcconfig"` in Identity.xcconfig reads. It is read directly
+# here rather than through the include, so the two questions below stay
+# separable — see the comment on `tracked_team`.
 
 if require_team
   local = config_override.nil? ? LOCAL_XCCONFIG : File.expand_path("Local.xcconfig", File.dirname(config))
 
-  if defines_non_empty?(identity_text, TEAM_VAR)
+  # TWO DIFFERENT QUESTIONS, and asking the wrong one here is a false security
+  # warning on every developer machine.
+  #
+  # This branch asks the leak question: is a Team ID sitting in a file that is
+  # IN GIT? That is about one file's own text. `Xcconfig.value` answers the
+  # other question — what would Xcode resolve DEVELOPMENT_TEAM to here — and
+  # Identity.xcconfig ends with `#include? "Local.xcconfig"`, so on every
+  # machine that has the gitignored file `value` would return the LOCAL team
+  # and this branch would announce a tracked-file leak that does not exist.
+  # `Xcconfig.own` does not follow includes, and is the question actually being
+  # asked. Raw and unexpanded, matching the predicate it replaces.
+  tracked_team = Xcconfig.own(config)[TEAM_VAR]
+
+  if !tracked_team.nil? && !tracked_team.empty?
     # Satisfies the check, but a Team ID defined in the tracked file is a
     # Team ID in git — the exact leak the gitignored Local.xcconfig exists
     # to prevent.
     warn "IDENTITY PREFLIGHT WARNING: #{TEAM_VAR} is defined in #{config}, " \
          "which is tracked. The Team ID belongs in gitignored app/Local.xcconfig only."
   else
-    team_resolved = File.exist?(local) && defines_non_empty?(read_utf8(local), TEAM_VAR)
-    unless team_resolved
+    local_team = begin
+                   File.exist?(local) ? Xcconfig.value(local, TEAM_VAR) : nil
+                 rescue Xcconfig::MissingInclude => e
+                   fail_with 2, "#{local} could not be resolved: #{e.message}."
+                 end
+    unless !local_team.nil? && !local_team.empty?
       # This message has to exist because Xcode's own behaviour is useless
       # here: on iOS it says `requires a development team` (names the concept,
       # not the variable or the file); on macOS it says NOTHING AT ALL — the

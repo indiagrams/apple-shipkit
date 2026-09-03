@@ -19,6 +19,13 @@
 #                               shape (every value followed by inline `# comment`).
 #                               Catches regression of #108's BLOCKER 2.
 #
+#   xcconfig-regression       — hermetic contract test for bin/lib/xcconfig.rb,
+#                               the one reader of app/Identity.xcconfig. Its
+#                               expected values were read back with
+#                               `xcodebuild -showBuildSettings`; the job pins
+#                               them so a future edit cannot quietly disagree
+#                               with Xcode again.
+#
 #   bundle-guard-regression   — runs `make doctor` on a fresh checkout WITHOUT
 #                               `bundle install`. Asserts friendly-error path
 #                               (`Ruby gems aren't installed yet`) instead of
@@ -47,6 +54,10 @@ on:
       - 'test/parser_test.rb'
       - 'test/sh_stream_test.rb'
       - 'test/build_number_test.rb'
+      - 'test/xcconfig_test.rb'
+      - 'bin/lib/xcconfig.rb'
+      - 'bin/preflight-identity.rb'
+      - 'app/Identity.xcconfig'
       - 'bin/lib/version_resolver.rb'
       - 'Makefile'
       - '.github/workflows/bootstrap-doctor-matrix.yml'
@@ -299,6 +310,28 @@ jobs:
           bundler-cache: false  # stdlib-only; spaceship is stubbed in test/stubs/
       - name: Run build number regression tests
         run: ruby test/build_number_test.rb
+
+  # bin/preflight-identity.rb decided "non-empty" with an `=[ \t]*\S` match, so
+  # `BUNDLE_ID = // temporarily disabled` — a value Xcode resolves to the empty
+  # string, because `//` opens a comment at any position — passed the gate the
+  # gate exists to fail. ci/local-release-check.sh read the bundle id out of
+  # app/project.yml, which now carries `$(BUNDLE_ID)`. Both now go through
+  # bin/lib/xcconfig.rb, whose rows were measured against
+  # `xcodebuild -showBuildSettings` rather than against either caller. Stdlib
+  # only and platform-agnostic, so it runs on ubuntu like the parser test.
+  xcconfig-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # xcconfig.rb has zero require lines; the test asserts it
+      - name: Run xcconfig parser contract tests
+        run: ruby test/xcconfig_test.rb
+      - name: Identity preflight passes on the tracked xcconfig
+        run: bash ci/check-identity.sh
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in
