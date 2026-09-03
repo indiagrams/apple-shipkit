@@ -77,8 +77,37 @@ with_prefix("v") do
   assert_eq V.parse_tag("v1.0.0+5"), ["1.0.0", "5"], "explicit v behaves like the default"
 end
 
+# The setting lives in .bootstrap.env, but Version.tag_prefix reads ENV — so the
+# value has to be plumbed from one to the other, and then into the fastlane
+# subprocess. The first version of this feature did neither: ship.rb computed
+# `app/v0.1.2+10` and handed it to a fastlane process that still thought the
+# prefix was "v", leaving the tag unstripped and every artifact name built from
+# it. These are the assertions that would have caught that.
+puts "\nconfig plumbing"
+cfg = Bootstrap::Config.new("RELEASE_TAG_PREFIX" => "app/v")
+with_prefix(nil) do
+  assert_eq cfg.release_tag_prefix, "app/v", ".bootstrap.env value is read"
+end
+with_prefix("release/") do
+  assert_eq cfg.release_tag_prefix, "release/", "process env beats .bootstrap.env"
+end
+with_prefix(nil) do
+  assert_eq Bootstrap::Config.new({}).release_tag_prefix, "v", "absent everywhere defaults to v"
+  assert_eq Bootstrap::Config.new("RELEASE_TAG_PREFIX" => "").release_tag_prefix, "",
+            "explicit empty in the file is honoured, not coerced to v"
+end
+with_prefix("") do
+  assert_eq cfg.release_tag_prefix, "", "explicit empty in env is honoured"
+end
+
+# asc_env is what reaches the fastlane subprocess.
+assert_eq Bootstrap.method(:asc_env).source_location.nil?, false, "asc_env exists"
+asc_env_src = File.read(File.expand_path("../bin/lib/bootstrap.rb", __dir__))
+assert_eq asc_env_src.include?('"RELEASE_TAG_PREFIX"      => config.release_tag_prefix'), true,
+          "asc_env propagates RELEASE_TAG_PREFIX to fastlane"
+
 if @failures.zero?
-  puts "\nAll 16 tag prefix tests passed."
+  puts "\nAll 23 tag prefix tests passed."
   exit 0
 else
   puts "\n#{@failures} test(s) failed."

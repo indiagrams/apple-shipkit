@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `bin/refork-smoketest.sh` — added `--skip-cert-revoke` to skip step 2's team-wide "revoke all `Created via API` certs" residue cleanup. That step is safe only when the smoketest owns its Apple team alone; once the team is **shared** (e.g. the canary reforked onto the Indiagram LLC account alongside a real app), a blanket revoke would kill the co-tenant's API-minted certs — verified against the LLC, where an `Apple Development: Created via API` cert belonging to another app would have matched the filter. With the flag, step 2 no-ops (the canary mints + revokes its own certs each run, and a shared team has no smoketest residue to clean anyway).
 
+### Fixed
+
+- **`RELEASE_TAG_PREFIX` was unreachable from `.bootstrap.env`, and never reached fastlane.** Shipped incomplete in the commit below. `Bootstrap::Config` is parsed from the file with no `ENV` merge, and `Bootstrap::Version.tag_prefix` reads `ENV` — so setting the prefix in `.bootstrap.env` did nothing. Worse, `Bootstrap.asc_env` did not propagate it, so even with the env set, `bin/ship.rb` computed `app/v0.1.2+10` and handed it to a fastlane subprocess that still believed the prefix was `v`: `strip_release_tag_prefix` left the tag intact and every artifact name downstream was built from `app/v0.1.2+10`.
+
+  Adds `Config#release_tag_prefix` (process env → `.bootstrap.env` → `"v"`, with an explicitly empty value honoured at both layers rather than falling through), lists the key in `Config::OPTIONAL`, propagates it through `asc_env`, and has `bin/ship.rb` and `bin/compute-release-tag.rb` publish the resolved value into `ENV` before computing so the resolver and fastlane cannot disagree.
+
+  `test/tag_prefix_test.rb` grows to 23 assertions covering exactly this. Mutation-verified: removing the `asc_env` propagation fails 1, and making the accessor ignore the file fails 2.
+
 ### Added
 
 - **`RELEASE_TAG_PREFIX` — release tags can move out of the namespace SwiftPM resolves.** A repo that is both an app *and* a SwiftPM package publishes both from one tag namespace, because SwiftPM claims every tag that parses as a version. So `v1.0.0+5` is simultaneously the app's release marker and package version `1.0.0`: an App Store metadata bump publishes a package version, adopters get a bump from a commit that never mentions SwiftPM, and the package cannot be versioned on its own merits.
