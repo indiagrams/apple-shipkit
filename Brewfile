@@ -10,6 +10,7 @@ brew "xcbeautify"      # nicer xcodebuild logs
 brew "xcresultparser"  # parse .xcresult bundles in CI
 
 # Git workflow
+brew "shellcheck"      # ci/check-shell.sh — bash -n + shellcheck over every tracked *.sh
 brew "lefthook"        # pre-push hook → ci/local-check.sh --fast
 brew "gh"              # PR / release CLI
 

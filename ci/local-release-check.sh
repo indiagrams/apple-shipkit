@@ -405,6 +405,14 @@ if $SIGN_MACOS; then
       "$EXPORT_OPTS_MACOS"
   fi
 
+  # CODE_SIGN_STYLE: when we patch the plist ourselves the project's own setting
+  # is left alone; otherwise Automatic is forced. An array rather than an
+  # unquoted `$(... && echo "" || echo ...)` so the "pass nothing" branch really
+  # is zero arguments instead of one empty one, which xcodebuild would see as a
+  # stray empty setting (SC2046). Matches the ASC_AUTH_ARGS idiom below it.
+  MACOS_SIGN_STYLE_ARGS=()
+  $PATCH_MACOS_PLIST || MACOS_SIGN_STYLE_ARGS=(CODE_SIGN_STYLE=Automatic)
+
   xcodebuild archive \
     -project app/App.xcodeproj \
     -scheme App-macOS \
@@ -414,7 +422,7 @@ if $SIGN_MACOS; then
     ${ASC_AUTH_ARGS[@]+"${ASC_AUTH_ARGS[@]}"} \
     ${MACOS_SIGN_ARGS[@]+"${MACOS_SIGN_ARGS[@]}"} \
     -allowProvisioningUpdates \
-    $($PATCH_MACOS_PLIST && echo "" || echo "CODE_SIGN_STYLE=Automatic") \
+    ${MACOS_SIGN_STYLE_ARGS[@]+"${MACOS_SIGN_STYLE_ARGS[@]}"} \
     DEVELOPMENT_TEAM="$TEAM_ID" \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \

@@ -110,6 +110,11 @@ verify_helpers_in_sync
 # named here before xcodegen would silently generate around it.
 ci/check-identity.sh || fail "app/Identity.xcconfig incomplete — see ci/check-identity.sh"
 
+# Same check pr.yml's `shell scripts` job runs. Cheap (seconds) and worth having
+# on the pre-push path: a broken shell script is otherwise invisible until a
+# release runs it. Needs shellcheck, which is in the Brewfile.
+ci/check-shell.sh || fail "a tracked shell script is broken — see ci/check-shell.sh"
+
 case "$mode" in
   --fast)
     ensure_xcodeproj

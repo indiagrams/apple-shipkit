@@ -123,6 +123,9 @@ set +a
 for k in FASTLANE_TEAM_ID ASC_API_KEY_ID ASC_API_KEY_ISSUER_ID ASC_API_KEY_P8_BASE64 \
          MATCH_PASSWORD MATCH_GIT_BASIC_AUTHORIZATION KEYCHAIN_PASSWORD; do
   v="${!k:-}"
+  # SC2088: the tilde here is display text naming the file we just sourced (see
+  # the `source "$HOME/..."` above), not a path this line expands or uses.
+  # shellcheck disable=SC2088
   [ -n "$v" ] || { echo "~/.config/secrets.env missing $k" >&2; exit 1; }
 done
 

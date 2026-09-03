@@ -102,6 +102,23 @@ jobs:
   # `--strict` treats warnings as errors so the signal is binary.
   # Excluded paths (Tuist Derived, fastlane SnapshotHelper, build outputs)
   # are configured in .swiftlint.yml itself, not here.
+  shellcheck:
+    name: shell scripts
+    # ubuntu, not macos: this needs git + bash + shellcheck and nothing from
+    # Xcode, and shellcheck is preinstalled on the ubuntu image. Runs on every
+    # PR rather than behind a paths filter -- a shell script is reachable from
+    # almost any change here, and the job takes seconds.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck present
+        # Preinstalled on ubuntu-latest today; install rather than assume, so a
+        # future image change downgrades to a slower job and not a silent skip.
+        run: command -v shellcheck >/dev/null || sudo apt-get install -y shellcheck
+      - name: bash -n + shellcheck
+        run: ./ci/check-shell.sh
+
   swiftlint:
     name: swiftlint
     runs-on: macos-15

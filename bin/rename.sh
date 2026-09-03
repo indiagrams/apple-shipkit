@@ -555,7 +555,7 @@ apply_substitutions() {
   # DISPLAY_NAME to the APP_NAME (forker's code-name) instead of the
   # DISPLAY_NAME (forker's user-facing name). One site: the xcconfig feeds
   # CFBundleDisplayName on both platforms through both generators.
-  sed -i '' "s#^\([[:space:]]*DISPLAY_NAME[[:space:]]*=[[:space:]]*\)$current_display[[:space:]]*\$#\1$DISPLAY_PLACEHOLDER#" app/Identity.xcconfig
+  sed -i '' "s#^\([[:space:]]*DISPLAY_NAME[[:space:]]*=[[:space:]]*\)${current_display}[[:space:]]*\$#\1$DISPLAY_PLACEHOLDER#" app/Identity.xcconfig
   grep -q "$DISPLAY_PLACEHOLDER" app/Identity.xcconfig || \
     fail "DISPLAY placeholder was not set in app/Identity.xcconfig — sed regression"
   ok "DISPLAY placeholder set in app/Identity.xcconfig (DISPLAY_NAME)"
