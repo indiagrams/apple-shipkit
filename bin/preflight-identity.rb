@@ -164,9 +164,24 @@ unless config_override.nil?
 end
 
 # --- exit 2: the file is not there ------------------------------------------
+#
+# File.file?, not File.exist?: a directory — or a socket, or a fifo — at that
+# path passes File.exist?, and the read below then raises Errno::EISDIR out of
+# the parser. Ruby exits 1 with a backtrace, and 1 is the code this contract
+# spends on malformed argv, so a caller branching on the code reads "your
+# config path is a directory" as "you called me wrong". Reproduced with
+# `--config app` under both pinned interpreters. A non-regular path is "not
+# found" for this gate's purposes, and the message says which kind it was.
 
-unless File.exist?(config)
-  fail_with 2, "#{config} not found (cwd: #{Dir.pwd}). " \
+unless File.file?(config)
+  state = if File.directory?(config)
+            "is a directory, not a file"
+          elsif File.exist?(config)
+            "is not a regular file"
+          else
+            "not found"
+          end
+  fail_with 2, "#{config} #{state} (cwd: #{Dir.pwd}). " \
                "app/Identity.xcconfig is the tracked identity source of truth; " \
                "generation must not proceed without it."
 end
@@ -233,7 +248,7 @@ if require_team
          "which is tracked. The Team ID belongs in gitignored app/Local.xcconfig only."
   else
     local_team = begin
-                   File.exist?(local) ? Xcconfig.value(local, TEAM_VAR) : nil
+                   File.file?(local) ? Xcconfig.value(local, TEAM_VAR) : nil
                  rescue Xcconfig::MissingInclude => e
                    fail_with 2, "#{local} could not be resolved: #{e.message}."
                  end
@@ -244,7 +259,17 @@ if require_team
       # build succeeds with `Signing Identity: "Sign to Run Locally"`
       # (observed on Xcode 26.1.1). Neither names DEVELOPMENT_TEAM or the file
       # that should have defined it. This one does.
-      state = File.exist?(local) ? "present but does not define #{TEAM_VAR} with a non-empty value" : "not found"
+      # Same File.file? discipline as the exit-2 branch: a directory named
+# Local.xcconfig must not read as a file that failed its check.
+state = if File.file?(local)
+          "present but does not define #{TEAM_VAR} with a non-empty value"
+        elsif File.directory?(local)
+          "a directory, not a file"
+        elsif File.exist?(local)
+          "not a regular file"
+        else
+          "not found"
+        end
       fail_with 4, "#{TEAM_VAR} is unresolvable: app/Local.xcconfig (#{local}) is #{state}. " \
                    "`make bootstrap-fork` writes app/Local.xcconfig (gitignored) from " \
                    "FASTLANE_TEAM_ID in .bootstrap.env; on a clone that has not run it, create it " \
