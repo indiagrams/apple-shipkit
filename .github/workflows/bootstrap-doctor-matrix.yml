@@ -26,6 +26,14 @@
 #                               them so a future edit cannot quietly disagree
 #                               with Xcode again.
 #
+#   demo-account-regression   — hermetic test of Bootstrap::ReviewDetail. deliver
+#                               rewrites `demo_account_required` from demo
+#                               credentials it was never given, flipping it to
+#                               false on top of the ones ASC still stores. The
+#                               job pins when the flag is restored and, just as
+#                               importantly, when an honest derivation is left
+#                               alone.
+#
 #   bundle-guard-regression   — runs `make doctor` on a fresh checkout WITHOUT
 #                               `bundle install`. Asserts friendly-error path
 #                               (`Ruby gems aren't installed yet`) instead of
@@ -54,7 +62,9 @@ on:
       - 'test/parser_test.rb'
       - 'test/sh_stream_test.rb'
       - 'test/build_number_test.rb'
+      - 'test/demo_account_required_test.rb'
       - 'test/xcconfig_test.rb'
+      - 'bin/lib/review_detail.rb'
       - 'bin/lib/xcconfig.rb'
       - 'bin/preflight-identity.rb'
       - 'app/Identity.xcconfig'
@@ -332,6 +342,26 @@ jobs:
         run: ruby test/xcconfig_test.rb
       - name: Identity preflight passes on the tracked xcconfig
         run: bash ci/check-identity.sh
+
+  # deliver's review_information() omits empty review fields from its PATCH —
+  # which is what the Fastfile's `" "` sentinel relies on — but then WRITES
+  # `demo_account_required` in an else branch rather than omitting it. A fork
+  # with no APP_REVIEW_DEMO_USER/_PASSWORD therefore gets the flag derived from
+  # values deliver deliberately did not send, landing on top of the credentials
+  # ASC still stores. Downstream, 0.1.0 was approved with the flag true and the
+  # first submit of 0.1.1 produced false on both platforms with the credentials
+  # untouched. Pure decision logic, so it runs on ubuntu like the sibling tests.
+  demo-account-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # review_detail.rb has zero require lines
+      - name: Run demo_account_required regression tests
+        run: ruby test/demo_account_required_test.rb
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in
