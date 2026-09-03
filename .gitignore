@@ -22,9 +22,9 @@ app/Derived/
 
 # Per-clone signing configuration: DEVELOPMENT_TEAM (the Apple Team ID) lives
 # here and nowhere tracked. app/Identity.xcconfig includes it with `#include?`,
-# which is silent when the file is absent. Written by `bin/rename.sh --team-id`
-# / `make bootstrap-fork`; `bin/preflight-identity.rb --require-team` names it
-# when it is missing.
+# which is silent when the file is absent. Create it by hand with a single
+# `DEVELOPMENT_TEAM = <your Team ID>` line; `bin/preflight-identity.rb
+# --require-team` names it and prints that instruction when it is missing.
 app/Local.xcconfig
 
 # Editor

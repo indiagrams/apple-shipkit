@@ -65,6 +65,8 @@ on:
       - 'test/demo_account_required_test.rb'
       - 'test/tag_prefix_test.rb'
       - 'test/xcconfig_test.rb'
+      - 'test/rename_scope_test.rb'
+      - 'bin/rename.sh'
       - 'bin/lib/review_detail.rb'
       - 'bin/lib/xcconfig.rb'
       - 'bin/preflight-identity.rb'
@@ -343,6 +345,27 @@ jobs:
         run: ruby test/xcconfig_test.rb
       - name: Identity preflight passes on the tracked xcconfig
         run: bash ci/check-identity.sh
+
+  # bin/rename.sh personalizes contact address and repo slug and MUST NOT
+  # substitute identity: those four values live in app/Identity.xcconfig, and a
+  # script that writes them too silently restores the two-sources-of-truth
+  # problem that file removed — on the one code path a forker runs before
+  # anything has been built. Every existing gate would stay green, because every
+  # existing gate reads the xcconfig, which the sweep would have written
+  # correctly on its way past. Asserted in both directions: the retired literals
+  # are absent AND the two surviving substitution steps are present, because the
+  # negative half alone is satisfied by an empty file. Stdlib only, so ubuntu.
+  rename-scope-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # rename_scope_test.rb is stdlib-only
+      - name: Assert bin/rename.sh's substitution scope
+        run: ruby test/rename_scope_test.rb
 
   # deliver's review_information() omits empty review fields from its PATCH —
   # which is what the Fastfile's `" "` sentinel relies on — but then WRITES

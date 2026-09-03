@@ -39,8 +39,9 @@ DISPLAY_NAME     = HelloApp
 COPYRIGHT        = TODO Copyright © <year> <Your Org>. All rights reserved.
 
 // The Apple Team ID (DEVELOPMENT_TEAM) lives in app/Local.xcconfig, which is
-// gitignored and never tracked. `bin/rename.sh --team-id=…` writes it; so does
-// `make bootstrap-fork`. On a clone without that file the include below is
+// gitignored and never tracked. Create it by hand — it is one line, and it is
+// per-clone rather than per-fork, so no script writes it for you. On a clone
+// without that file the include below is
 // silent and DEVELOPMENT_TEAM is undefined — not empty, undefined: no line for
 // it appears in -showBuildSettings at all, and Xcode's own message on macOS is
 // nothing (the build succeeds ad-hoc signed). The named failure comes from

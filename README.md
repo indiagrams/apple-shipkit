@@ -174,7 +174,7 @@ Each step is its own fastlane lane in `fastlane/Fastfile`. Read the file — it'
 │   ├── bootstrap-doctor-matrix.yml  # weekly doctor sweep across 4 cells
 │   ├── canary-trigger.yml       # weekly CI-mode ship-validation (template-only; no-op on forks)
 │   ├── canary-local-mode.yml    # weekly local-mode ship-validation (cron commented; forks opt in)
-│   └── verify-rename.yml        # gate: rename script integrity
+│   └── migrate.yml              # gate: the rename→config migration, end to end
 ├── Brewfile                     # xcodegen + tuist + fastlane + lefthook + swiftlint + swiftformat
 ├── Makefile                     # init | doctor | bootstrap | bootstrap-fork | ship | verify | submit | screenshots | …
 ├── lefthook.yml                 # pre-push: ci/local-check.sh --fast
@@ -186,7 +186,8 @@ Each step is its own fastlane lane in `fastlane/Fastfile`. Read the file — it'
 │   ├── verify-testflight.rb     # `make verify` driver
 │   ├── adopt.rb                 # `make adopt` driver (existing-app forks)
 │   ├── lib/bootstrap.rb         # the orchestration framework (18-step pipeline)
-│   ├── rename.sh                # write your identity into app/Identity.xcconfig (+ docs, metadata)
+│   ├── rename.sh                # personalize contact address + repo slug (identity is edited by hand)
+│   ├── migrate-identity.rb      # one-time: a pre-Identity.xcconfig fork → the config-based scheme
 │   ├── switch-to-tuist.sh       # one-way XcodeGen → Tuist switch
 │   ├── setup-github.sh          # branch protection + squash-only + required checks
 │   ├── preflight.sh             # check developer-tool prerequisites

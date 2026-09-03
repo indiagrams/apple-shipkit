@@ -12,13 +12,13 @@
 #   that app/project.yml is gone and stops emitting xcodegen cells.
 #
 #   Two callers:
-#     1. `bin/rename.sh ... --generator=tuist` calls this script
+#     1. `bin/refork-smoketest.sh --generator=tuist` calls this script
 #        (with --force, since rename.sh's tree is mid-mutation).
 #     2. The 3 Tuist parity jobs in .github/workflows/pr.yml call this
 #        script before building, so CI verifies the Tuist manifest
 #        stays compatible with the XcodeGen one on every PR.
 #
-#   Factoring the surgery out of bin/rename.sh into a standalone script
+#   Factoring the surgery out of the fork-creation path into a standalone script
 #   keeps both call-sites testable in isolation. The inverse direction
 #   is bin/switch-to-xcodegen.sh (added later for the canary-trigger
 #   `generator=xcodegen` override against tuist-permanent forks).
@@ -186,7 +186,7 @@ mutate_remove_project_yml() {
   step "Removing app/project.yml"
   if [ -f "app/project.yml" ]; then
     # -f bypasses git's "file has local modifications" refusal.
-    # bin/rename.sh invokes this script mid-mutation (project.yml is sed-
+    # A fork-creation path may invoke this script mid-mutation (project.yml is sed-
     # substituted but uncommitted); -f tolerates that. On a clean tree
     # there are no local modifications so -f is a no-op.
     git rm -f --quiet app/project.yml

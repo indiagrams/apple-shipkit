@@ -45,7 +45,7 @@ If you're just exploring the template, an Apple ID + free developer signing is e
 
 Once you've enrolled in the Apple Developer Program:
 
-- [ ] Note your **Team ID** — visible at <https://developer.apple.com/account/> under Membership Details. 10-character alphanumeric string like `ABCDE12345`. Put it in `.bootstrap.env` as `FASTLANE_TEAM_ID`; `make bootstrap-fork` (or `bin/rename.sh --team-id=…`) writes it as `DEVELOPMENT_TEAM` into the **gitignored** `app/Local.xcconfig`. It never goes into a tracked file — `app/Identity.xcconfig` pulls `Local.xcconfig` in with `#include?`, and `ruby bin/preflight-identity.rb --require-team` names it if it is missing.
+- [ ] Note your **Team ID** — visible at <https://developer.apple.com/account/> under Membership Details. 10-character alphanumeric string like `ABCDE12345`. Put it in `.bootstrap.env` as `FASTLANE_TEAM_ID`, and create the **gitignored** `app/Local.xcconfig` by hand with one line, `DEVELOPMENT_TEAM = <your Team ID>`. It is per-clone signing configuration rather than per-fork identity, so nothing writes it for you. It never goes into a tracked file — `app/Identity.xcconfig` pulls `Local.xcconfig` in with `#include?`, and `ruby bin/preflight-identity.rb --require-team` names it if it is missing.
 - [ ] Create the app record on App Store Connect — <https://appstoreconnect.apple.com> → My Apps → "+". Use the bundle ID you set via `bin/rename.sh`.
 - [ ] Generate an **App Store Connect API key** (recommended for fastlane non-interactive uploads):
   - <https://appstoreconnect.apple.com/access/integrations/api> → Team Keys → "+"

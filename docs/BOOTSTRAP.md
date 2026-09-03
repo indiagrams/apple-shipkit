@@ -143,7 +143,8 @@ Mode key: ⚪ both, 🅒 ci-only, 🅛 local-only, 🍎 macOS-only.
 | 1 | `CheckAppleCreds` | ⚪ | Validates `.p8` + key id + issuer id by probing ASC API |
 | 2 | `CheckGHCreds` | ⚪ | CI mode: probes `gh auth status`. Local mode: no-op (gh CLI not used at ship time). |
 | 3 | `RemoteMatches` | ⚪ | Verifies `git remote get-url origin` matches `GH_ORG/GH_APP_REPO` |
-| 4 | `RenameStub` | ⚪ | Runs `bin/rename.sh` (HelloApp → APP_NAME) + `bin/verify-rename.sh` |
+| 4 | `Personalize` | ⚪ | Runs `bin/rename.sh --email=…` — contact address and repo slug only |
+| 4b | `IdentityAdopted` | 🙋 | Blocks until `app/Identity.xcconfig` carries this fork's `APP_PRODUCT_NAME`. Edited by hand; a fork predating that file migrates with `ruby bin/migrate-identity.rb` |
 | 5 | `BrewBootstrap` | ⚪ | `make bootstrap` (brew bundle + lefthook + xcodegen/tuist + bundler) |
 | 6 | `Icon1024` | ⚪ | If `ICON_1024_PATH` set, copies it to the iOS asset catalog (tree mutation lands before `InitialPush`) |
 | 7 | `MakeIcons` | 🍎 | `make icons` — regenerates the macOS `.icns` from the 1024 PNG. Runs only when `PLATFORMS` includes `macos`. |

@@ -488,30 +488,80 @@ module Bootstrap
     end
   end
 
-  class RenameStub < Step
-    def name; "Rename HelloApp → #{config['APP_NAME']}"; end
+  # Two steps where there used to be one, because the two halves have different
+  # kinds of answer. Personalizing the contact address and the repository slug is
+  # mechanical and this driver can do it. Choosing the app's identity is not: it
+  # is four values only the person forking knows, and there is no default that is
+  # safe to invent — a default is how a fork ships under someone else's name.
+  class Personalize < Step
+    def name; "Personalize contact address and repo slug"; end
+
+    # The two literals bin/rename.sh substitutes, and the only two files in which
+    # the slug one means "this repository" rather than "the template".
+    TEMPLATE_LITERALS = %w[maintainers@indiagram.com indiagrams/apple-shipkit].freeze
+    PERSONALIZED_PATHS = %w[README.md CONTRIBUTING.md].freeze
 
     def check
-      # Done iff app/Identity.xcconfig already carries this fork's product name.
-      # The project structure (app/App.xcodeproj, app/Shared/App.swift, …) is a
-      # constant that the rename never touches; identity is what it writes.
-      identity = REPO_ROOT.join("app", "Identity.xcconfig")
-      return :pending unless identity.file?
-      text = identity.read(encoding: "UTF-8")
-      text.match?(/^\s*APP_PRODUCT_NAME\s*=\s*#{Regexp.escape(config['APP_NAME'])}\s*$/) ? :done : :pending
+      # Ask the tree, not a marker file: a marker can be true about a run that
+      # did nothing.
+      TEMPLATE_LITERALS.each do |literal|
+        out, status = Open3.capture2e(
+          "git", "-C", REPO_ROOT.to_s, "grep", "-lw", "-F", "-e", literal,
+          "--", *PERSONALIZED_PATHS
+        )
+        # git grep: 0 = found, 1 = not found, anything else = it failed to look.
+        # Reading an error as an absence is how a step reports done on a tree it
+        # never scanned.
+        code = status.exitstatus
+        raise "git grep exited #{code} looking for #{literal}: #{out}" if code > 1
+        return :pending if code.zero?
+      end
+      :done
     end
 
     def do_it
-      args = [
-        "bin/rename.sh",
-        config["APP_NAME"], config["BUNDLE_ID"], config["DISPLAY_NAME"],
-        "--email=#{config['APP_EMAIL']}",
-        "--generator=#{config['GENERATOR']}",
-        "--platforms=#{config.platforms.join(',')}",
-        "--team-id=#{config['FASTLANE_TEAM_ID']}"
-      ]
-      Sh.run!(*args)
-      Sh.run!("bin/verify-rename.sh")
+      Sh.run!("bin/rename.sh", "--email=#{config['APP_EMAIL']}")
+    end
+  end
+
+  class IdentityAdopted < Step
+    def name; "App identity (app/Identity.xcconfig)"; end
+    def category; "human-gated"; end
+
+    IDENTITY_PATH = "app/Identity.xcconfig"
+
+    def check
+      identity = REPO_ROOT.join(IDENTITY_PATH)
+      return [:blocked, missing_msg] unless identity.file?
+
+      text = identity.read(encoding: "UTF-8")
+      return :done if text.match?(/^\s*APP_PRODUCT_NAME\s*=\s*#{Regexp.escape(config['APP_NAME'])}\s*$/)
+
+      [:blocked, disagreement_msg]
+    end
+
+    # Never reached: a blocked check fails loud before do_it runs. Defined
+    # because Step declares it, and raising is more honest than a no-op that
+    # would let a later refactor turn this gate into a pass.
+    def do_it
+      raise "#{IDENTITY_PATH} is edited by hand; there is nothing here to automate"
+    end
+
+    private
+
+    def missing_msg
+      "#{IDENTITY_PATH} does not exist. It is the one tracked identity file — " \
+        "APP_PRODUCT_NAME, BUNDLE_ID, DISPLAY_NAME and COPYRIGHT — read by both " \
+        "generators as $(VAR) and by bin/lib/xcconfig.rb. Restore it from the " \
+        "template and set the four values."
+    end
+
+    def disagreement_msg
+      "#{IDENTITY_PATH} does not set APP_PRODUCT_NAME = #{config['APP_NAME']}. " \
+        "Identity is edited there by hand: bin/rename.sh no longer writes it, and " \
+        "nothing defaults it, because a default is how a fork ships under someone " \
+        "else's name. A fork created before that file existed migrates with " \
+        "`ruby bin/migrate-identity.rb`; see docs/MIGRATING-FROM-RENAME.md."
     end
   end
 
@@ -545,7 +595,7 @@ module Bootstrap
       _out, dirty = Sh.run("git", "diff", "--quiet")
       Sh.run!("git", "add", "-A") unless dirty
       Sh.run!("git", "-c", "user.email=#{config['APP_EMAIL']}", "-c", "user.name=#{config['APP_NAME']} bootstrap",
-              "commit", "-m", "Bootstrap fork: rename HelloApp -> #{config['APP_NAME']}") unless dirty
+              "commit", "-m", "Bootstrap fork: personalize #{config['APP_NAME']}") unless dirty
       Sh.run!("git", "push", "-u", "origin", "main")
     end
   end
@@ -1471,7 +1521,8 @@ module Bootstrap
       CheckAppleCreds,
       CheckGHCreds,
       RemoteMatches,
-      RenameStub,
+      Personalize,
+      IdentityAdopted,
       BrewBootstrap,
       Icon1024,              # tree mutations land before InitialPush
       MakeIcons,

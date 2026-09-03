@@ -1,7 +1,7 @@
 # Switching an already-renamed fork from XcodeGen to Tuist
 
 > **If you're forking the template fresh, prefer
-> `bin/rename.sh ... --generator=tuist` — it produces a Tuist-only
+> `bin/switch-to-tuist.sh` — it produces a Tuist-only
 > fork in one shot.** This doc covers the in-place switch path:
 > you already ran `bin/rename.sh` (or the default
 > `--generator=xcodegen`) and now want to flip your existing fork
@@ -13,7 +13,7 @@ The fast path is one command:
 bin/switch-to-tuist.sh   # idempotent + atomic-rollback (parity with bin/rename.sh)
 ```
 
-That script is what `bin/rename.sh --generator=tuist` invokes for you
+That script is what `bin/refork-smoketest.sh --generator=tuist` invokes for you
 at fork time. Running it standalone on an already-renamed fork is the
 equivalent in-place operation.
 
@@ -324,20 +324,15 @@ with:
 
 ```bash
 git grep "com.example.helloapp" app/Project.swift   # should show 4 hits before rename
-bin/rename.sh YourApp com.your-org.yourapp 'Your App' --email=you@example.com
+bin/rename.sh --email=you@example.com   # then edit app/Identity.xcconfig
 git grep "com.example.helloapp" app/Project.swift   # should be empty after rename
 ```
 
-If `bin/rename.sh` misses any literal in `Project.swift` that it caught
-in `project.yml` (sed pattern delimiter or escape edge case), file an
-issue against your fork — the literal patterns in `bin/rename.sh:291`
-are the source of truth and may need an update.
-
-### `bin/verify-rename.sh`
-
-Same logic — it greps tracked files for the four pre-rename literals.
-Tuist puts those literals in `Project.swift`, which is tracked, which
-the script already covers. No edit required.
+`bin/rename.sh` no longer substitutes identity in either manifest.
+Bundle id, product name, display name and copyright are `$(VAR)`
+references into `app/Identity.xcconfig`, which both generators read
+natively, so neither manifest carries a literal for the migration to
+miss and nothing here needs a generator-specific edit.
 
 ## Step 4 — Validate end-to-end
 
@@ -407,8 +402,8 @@ After migrating on a fresh fork:
       mutates the workflow — plus 3 Tuist parity) green on the PR.
 - [ ] The macOS app bundle's `.icns` matches `app/macOS/Resources/AppIcon.icns`
       by SHA-256 (post-build script ran correctly).
-- [ ] `bin/rename.sh` followed by `bin/verify-rename.sh` exits 0 on a
-      fresh test rename.
+- [ ] `ruby bin/preflight-identity.rb` exits 0 — every key in
+      `app/Identity.xcconfig` resolves through `Project.swift` too.
 - [ ] Signed release flow: `fastlane release tag:v0.0.0 skip_upload:true skip_tag:true`
       produces signed `.ipa` + `.pkg` artifacts in `build/`. (Optional
       but recommended if you ship via fastlane.)
