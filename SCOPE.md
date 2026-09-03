@@ -8,7 +8,7 @@ The framing was crystallized by an early forker on r/iOSProgramming: *"stuff aro
 
 Before opening an enhancement issue or PR, ask:
 
-> **Does this addition require modifying Swift source files in `app/HelloApp/` to use it?**
+> **Does this addition require modifying Swift source files in `app/Shared/` to use it?**
 
 - **No** → around the project; in scope. PRs welcome.
 - **Yes** → inside the project; deliberately out of scope.

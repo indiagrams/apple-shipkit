@@ -17,9 +17,9 @@ The fork ↔ upstream sync property is the most important architectural invarian
 |---|---|---|
 | Do **not** edit `fastlane/Fastfile` | Template-owned; upstream changes will conflict on every `git pull upstream main` | Add to `fastlane/Fastfile.local` (see "Custom fastlane logic" below) |
 | Do **not** hardcode `APP_NAME` / `BUNDLE_ID` / ASC URLs in workflows or scripts | They resolve from `.bootstrap.env` (Fastfile) or repo `vars.*` (workflows) | Set the env / repo variable |
-| Do **not** edit files under `bin/`, `ci/`, `.github/workflows/`, `Makefile` | Template-owned | Override via env, or open an upstream issue at `indiagrams/apple-shipkit` |
+| Do **not** edit files under `bin/`, `ci/`, `.github/workflows/`, `Makefile` | Template-owned | Override via env, or open an upstream issue at `indiagrams/apple-shipkit` — the TEMPLATE, not your own fork. If your copy of this cell names your fork instead, a personalization sweep rewrote the one pointer that tells you where to send fixes |
 | Do **not** commit secrets | `.bootstrap.env` and `.p8` files are gitignored | Commit `.bootstrap.env.example` only; real values live in GitHub Secrets / `~/.config/secrets/` |
-| Do **not** sed-substitute `HelloApp` literals | The template uses env-driven resolution everywhere it matters | Run `bin/rename.sh MyApp com.example.myapp "My App" --email=you@example.com` once at fork creation; afterward, the value is set in `.bootstrap.env` |
+| Do **not** sed-substitute `HelloApp` literals | The template resolves identity everywhere it matters | Run `bin/rename.sh MyApp com.example.myapp "My App" --email=you@example.com` once at fork creation; afterward, edit the four keys of `app/Identity.xcconfig` — that is where `bin/rename.sh` writes them and where both generators read them as `$(VAR)`. `.bootstrap.env` keeps its own `APP_NAME` / `BUNDLE_ID` handle, which the Fastfile and the release workflows read; it is not where the build gets its identity |
 
 ## Where your code goes
 

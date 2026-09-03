@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`AGENTS.md` and `SCOPE.md` told an agent two things that had stopped being true.** Both are read top-down by tools that cannot cross-check them against the tree.
+
+  The critical-invariants row on identity still ended "afterward, the value is set in `.bootstrap.env`", while `bin/rename.sh` has written `app/Identity.xcconfig` since identity became a slot, and the "Where your code goes" table seventeen lines below already named that file as "the one tracked identity file". One document, two incompatible instruction sets. The row now says identity is edited in `app/Identity.xcconfig`, and says what the `.bootstrap.env` handle is still for rather than dropping it: `APP_NAME` / `BUNDLE_ID` there are what the Fastfile and the release workflows read, and they are not where the build gets its identity.
+
+  `SCOPE.md`'s one test — the sentence every contribution is filtered through — named `app/HelloApp/`, a directory that has never existed. Measured with `git ls-tree -r --name-only <ref> -- app/` at five refs including the root commit: zero entries under `app/HelloApp/` at every one of them, and `app/Shared/` present at every one. A reader who runs the test literally has to guess which directory is meant, and the guess is the whole rule. It now names `app/Shared/`.
+
+  The template-owned row's "open an upstream issue at `indiagrams/apple-shipkit`" now says outright that the slug names the TEMPLATE and not your own fork. `bin/rename.sh`'s Step D substitutes that slug wherever it appears — measured on this tree at 15 tracked files after the script's own exclusion list is applied, `AGENTS.md` among them — so in a fork the one line telling a reader where to send fixes upstream has been rewritten to point back at the fork itself. The prose makes that visible to anyone reading a personalized copy. Narrowing the sweep is a behaviour change and is not in this docs-only pull request.
+
+### Fixed
+
 - **`RELEASE_TAG_PREFIX` was unreachable from `.bootstrap.env`, and never reached fastlane.** Shipped incomplete in the commit below. `Bootstrap::Config` is parsed from the file with no `ENV` merge, and `Bootstrap::Version.tag_prefix` reads `ENV` — so setting the prefix in `.bootstrap.env` did nothing. Worse, `Bootstrap.asc_env` did not propagate it, so even with the env set, `bin/ship.rb` computed `app/v0.1.2+10` and handed it to a fastlane subprocess that still believed the prefix was `v`: `strip_release_tag_prefix` left the tag intact and every artifact name downstream was built from `app/v0.1.2+10`.
 
   Adds `Config#release_tag_prefix` (process env → `.bootstrap.env` → `"v"`, with an explicitly empty value honoured at both layers rather than falling through), lists the key in `Config::OPTIONAL`, propagates it through `asc_env`, and has `bin/ship.rb` and `bin/compute-release-tag.rb` publish the resolved value into `ENV` before computing so the resolver and fastlane cannot disagree.
