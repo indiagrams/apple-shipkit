@@ -40,6 +40,10 @@ if Bootstrap::ENV_FILE.exist?
   config = Bootstrap::Config.load!
   config.validate!
   bundle_id = config["BUNDLE_ID"]
+  # Version.tag_prefix reads ENV; the setting lives in .bootstrap.env. Publish it
+  # so a plain `ruby bin/compute-release-tag.rb` and `make ship` agree on the
+  # prefix. config.release_tag_prefix already gives the process env precedence.
+  ENV["RELEASE_TAG_PREFIX"] = config.release_tag_prefix
 
   # Skip the ASC token setup entirely when RELEASE_BUILD_NUMBER short-
   # circuits the ASC query. Useful in CI environments that want

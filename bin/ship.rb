@@ -80,6 +80,10 @@ if config.local_mode?
   require_relative "lib/version_resolver"
   require "spaceship"
   Bootstrap.ensure_asc_token!(config)
+  # Version.tag_prefix reads ENV, while the setting lives in .bootstrap.env, so
+  # publish it before computing. Assigned rather than ||=: config.release_tag_prefix
+  # already gives ENV precedence, so this is a no-op when the caller set it.
+  ENV["RELEASE_TAG_PREFIX"] = config.release_tag_prefix
   begin
     tag = Bootstrap::Version.compute_release_tag(config["BUNDLE_ID"])
   rescue StandardError => e
