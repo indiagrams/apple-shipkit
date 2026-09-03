@@ -44,6 +44,7 @@
 #   2 fastlane lane failed for at least one platform
 
 require_relative "lib/bootstrap"
+require_relative "lib/review_detail"
 
 config = Bootstrap::Config.load!
 config.validate!
@@ -171,6 +172,11 @@ editable_states = %w[
   PREPARE_FOR_SUBMISSION DEVELOPER_REJECTED REJECTED METADATA_REJECTED INVALID_BINARY
 ].freeze
 
+# Snapshotted before the lanes run; reconciled after them. See
+# bin/lib/review_detail.rb for what deliver does to demo_account_required.
+asc_version_of = {}
+review_detail_before = {}
+
 puts Bootstrap::UI.bold("→ App Store version records (#{marketing})")
 platforms.each do |p|
   plat = asc_platform_of.fetch(p)
@@ -192,6 +198,16 @@ platforms.each do |p|
     )
   else
     puts Bootstrap::UI.ok("  #{p}: version #{marketing} exists (#{v.app_store_state})")
+  end
+
+  # Snapshot the review detail while we hold the version, before any lane runs.
+  # A freshly created version may not have one yet -- nil then means "nothing to
+  # preserve", not an error.
+  asc_version_of[p] = v
+  review_detail_before[p] = begin
+    Bootstrap::ReviewDetail.snapshot(v.fetch_app_store_review_detail)
+  rescue StandardError
+    nil
   end
 
   if v.build&.version
@@ -234,6 +250,46 @@ platforms.each do |p|
   end
   puts
 end
+
+# ─── Post-flight: undo deliver's rewrite of demo_account_required ────────────
+#
+# deliver derives this flag from the demo credentials in its PATCH, and the
+# Fastfile deliberately omits those so ASC keeps the ones it already stores.
+# Deriving from omitted input means the flag flips to false while populated
+# credentials sit right next to it. Restore it -- but only when deliver did not
+# actually change the credentials, so an honest derivation is never overridden.
+# Full explanation in bin/lib/review_detail.rb.
+announced = false
+(platforms - failed).each do |p|
+  before = review_detail_before[p]
+  version = asc_version_of[p]
+  next if before.nil? || version.nil?
+
+  detail = begin
+    version.fetch_app_store_review_detail
+  rescue StandardError => e
+    puts Bootstrap::UI.warn("  #{p}: could not re-read the review detail (#{e.message}).")
+    nil
+  end
+  next if detail.nil?
+
+  after = Bootstrap::ReviewDetail.snapshot(detail)
+  restore = Bootstrap::ReviewDetail.flag_to_restore(before: before, after: after)
+  next if restore.nil?
+
+  unless announced
+    puts Bootstrap::UI.bold("→ App Review detail")
+    announced = true
+  end
+  detail.update(attributes: { "demo_account_required" => restore })
+  # after[:required] is deliver's value, read before the PATCH -- do not re-read
+  # it off `detail`, which may or may not reflect the update.
+  puts Bootstrap::UI.ok(
+    "  #{p}: restored demo_account_required=#{restore} " \
+    "(deliver set #{after[:required]} from credentials it did not send)"
+  )
+end
+puts if announced
 
 if failed.empty?
   puts Bootstrap::UI.bold("✅ All configured platforms #{auto_submit ? 'submitted' : 'staged'}.")
