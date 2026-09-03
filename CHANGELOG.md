@@ -47,6 +47,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RELEASE_TAG_PREFIX` — release tags can move out of the namespace SwiftPM resolves.** A repo that is both an app *and* a SwiftPM package publishes both from one tag namespace, because SwiftPM claims every tag that parses as a version. So `v1.0.0+5` is simultaneously the app's release marker and package version `1.0.0`: an App Store metadata bump publishes a package version, adopters get a bump from a commit that never mentions SwiftPM, and the package cannot be versioned on its own merits.
+
+  **Measured rather than assumed.** With `v0.2`, `pkg-0.3.0`, `package/0.4.0` and `release/0.5.0` all tagged on a real repo, `.upToNextMajor(from: "0.1.0")` resolved to `0.1.1+9` — every *prefixed* tag was ignored — while a bare `v0.2` resolved as `0.2.0`. SwiftPM cannot be pointed at a different tag series, so the leverage runs the other way: move the **app** tags where SwiftPM cannot see them.
+
+  ```
+  RELEASE_TAG_PREFIX=app/v   ->  app/v1.0.0+5   invisible to SwiftPM
+                                 1.2.0          a package release you chose to cut
+  ```
+
+  **Unset means `v`, so no fork that ignores this changes at all** — that is the property the new `tag-prefix-regression` job exists to protect, and the reason `strip_release_tag_prefix` strips only the prefix rather than reparsing: the old `sub(/^v/, "")` preserved a canary tag's `-canary-N` suffix, and equivalence at the default was checked against all four tag shapes before the change landed.
+
+  Threaded through every reader: `Bootstrap::Version.tag_prefix` (canonical), `compute_release_tag`, `parse_tag`, the Fastfile's inlined `parse_release_tag` plus its GH-release tag glob and release-lane version, `ci/local-release-check.sh`, and `ci/bump-asc-version.rb`. Readers strip the configured prefix and then **fall back to a bare `v`**, so tags cut before a prefix change stay parseable. The tag-format check now validates the stripped version body rather than matching `^v`, which would have rejected every tag the moment a repo set a prefix.
+
+  `test/tag_prefix_test.rb` — 16 assertions across the default, a custom prefix, an explicitly empty one, and prefixes that could collide with the version body.
+
 - **`ci/check-shell.sh` — `bash -n` + ShellCheck over every tracked shell script, on every PR.** This template's release path is shell: `ci/local-release-check.sh` alone is ~470 lines of signing, packaging and re-signing. Nothing in CI executed any of it. The `app (...)` cells build the app; they never source `bin/rename.sh` or run the ship path, so **a PR that broke a shell script outright merged green** and failed later, on somebody's release.
 
   `bash -n` is the floor — a script that cannot be parsed should never reach main. ShellCheck at `warning` catches the tier above it, the constructs that run but do the wrong thing. It found 7 on first run, all now fixed:
