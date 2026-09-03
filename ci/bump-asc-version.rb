@@ -21,7 +21,11 @@ if ARGV.empty?
   exit 2
 end
 
-target = ARGV[0].sub(/^v/, '')
+# Strip the configured release-tag prefix, then fall back to a bare `v` so a tag
+# cut before a prefix change still resolves. See Bootstrap::Version.tag_prefix.
+_pfx = ENV.fetch("RELEASE_TAG_PREFIX", "v")
+_raw = ARGV[0].to_s
+target = (!_pfx.empty? && _raw.start_with?(_pfx)) ? _raw[_pfx.length..] : _raw.sub(/^v/, '')
 
 token = Spaceship::ConnectAPI::Token.create(
   key_id:    ENV.fetch("ASC_API_KEY_ID"),

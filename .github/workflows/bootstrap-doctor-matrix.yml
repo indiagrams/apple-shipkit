@@ -63,6 +63,7 @@ on:
       - 'test/sh_stream_test.rb'
       - 'test/build_number_test.rb'
       - 'test/demo_account_required_test.rb'
+      - 'test/tag_prefix_test.rb'
       - 'test/xcconfig_test.rb'
       - 'bin/lib/review_detail.rb'
       - 'bin/lib/xcconfig.rb'
@@ -362,6 +363,22 @@ jobs:
           bundler-cache: false  # review_detail.rb has zero require lines
       - name: Run demo_account_required regression tests
         run: ruby test/demo_account_required_test.rb
+
+  # RELEASE_TAG_PREFIX moves the app's release tags out of the namespace SwiftPM
+  # resolves, for repos that are both an app and a package. The property this
+  # job protects is the DEFAULT: unset must behave exactly as the old hardcoded
+  # `v` did, or every fork's release path changes underneath it.
+  tag-prefix-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # stdlib-only; spaceship is stubbed in test/stubs/
+      - name: Run release tag prefix tests
+        run: ruby test/tag_prefix_test.rb
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in

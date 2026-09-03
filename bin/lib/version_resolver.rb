@@ -161,23 +161,61 @@ module Bootstrap
       raise
     end
 
+    # The release tag's prefix. `v` unless RELEASE_TAG_PREFIX says otherwise.
+    #
+    # WHY THIS IS CONFIGURABLE
+    #
+    # A repo that is BOTH an app and a SwiftPM package publishes both from one
+    # tag namespace, and SwiftPM claims every tag that parses as a version. So
+    # an App Store metadata bump that produces `v0.1.1+9` also publishes package
+    # version 0.1.1 — adopters get a version bump from a commit that says
+    # nothing about SwiftPM, and the package cannot be versioned on its own
+    # merits.
+    #
+    # Measured, not assumed: with tags `v0.2`, `pkg-0.3.0`, `package/0.4.0` and
+    # `release/0.5.0` all present, `.upToNextMajor(from: "0.1.0")` resolved to
+    # `0.1.1+9` — SwiftPM ignored every PREFIXED tag and took the bare one. It
+    # also resolved a bare `v0.2` as 0.2.0. There is no way to point SwiftPM at
+    # a non-default tag series; the leverage runs the other way, by moving the
+    # APP tags somewhere SwiftPM cannot see:
+    #
+    #   RELEASE_TAG_PREFIX=app/v    ->  app/v0.1.2+10   invisible to SwiftPM
+    #                                   0.2.0           a deliberate package release
+    #
+    # Unset means `v`, so every fork that does not set it is byte-for-byte
+    # unchanged. Set it to the empty string to get bare `1.0.0+5` tags.
+    def self.tag_prefix
+      ENV.fetch("RELEASE_TAG_PREFIX", "v")
+    end
+
     # Compose the full release tag. Caller must have ensured the ASC
     # token is set (or set RELEASE_BUILD_NUMBER env to skip the ASC
     # query path).
     def self.compute_release_tag(bundle_id, repo_root: Dir.pwd)
       marketing = read_marketing_version(repo_root: repo_root)
       build = next_build_number(bundle_id, marketing)
-      "v#{marketing}+#{build}"
+      "#{tag_prefix}#{marketing}+#{build}"
     end
 
-    # Parse a tag (with or without leading `v`) into [marketing, build].
-    # Build is nil when the tag has no `+` suffix (legacy tags).
+    # Parse a tag into [marketing, build]. Build is nil when the tag has no `+`
+    # suffix (legacy tags).
     #
     #   parse_tag("v1.0.0+5")             → ["1.0.0", "5"]
     #   parse_tag("v2026.19.1357")        → ["2026.19.1357", nil]
     #   parse_tag("v0.2026.19-canary-7")  → ["0.2026.19", nil]
+    #
+    # Strips the configured prefix, then falls back to a bare leading `v`. The
+    # fallback is what keeps tags cut BEFORE a prefix change readable: a repo
+    # that switches to `app/v` still has `v0.1.1+9` in its history, and
+    # `ci/bump-asc-version.rb` may be handed either.
     def self.parse_tag(tag)
-      body = tag.to_s.sub(/^v/, "")
+      raw = tag.to_s
+      pfx = tag_prefix
+      body = if !pfx.empty? && raw.start_with?(pfx)
+               raw[pfx.length..]
+             else
+               raw.sub(/^v/, "")
+             end
       if body.include?("+")
         marketing, build = body.split("+", 2)
         [marketing, build]

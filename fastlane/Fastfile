@@ -293,8 +293,27 @@ end
 # Fastfile loads in fastlane's own context where load paths are
 # unstable across runners. Five-line helper isn't worth the cross-tree
 # require headache.
+# Mirrors Bootstrap::Version.tag_prefix (bin/lib/version_resolver.rb), which is
+# the canonical definition — see its header for why the prefix is configurable at
+# all. Duplicated for the same load-path reason as parse_release_tag below.
+def release_tag_prefix
+  ENV.fetch("RELEASE_TAG_PREFIX", "v")
+end
+
+# Strip only the prefix, leaving the rest of the tag untouched. Exactly
+# equivalent to the old `sub(/^v/, "")` when the prefix is the default `v`,
+# which matters because canary tags carry a `-canary-N` suffix that callers
+# still need.
+def strip_release_tag_prefix(tag)
+  raw = tag.to_s
+  pfx = release_tag_prefix
+  # Configured prefix first, then a bare `v` so tags cut BEFORE a prefix change
+  # stay readable.
+  (!pfx.empty? && raw.start_with?(pfx)) ? raw[pfx.length..] : raw.sub(/^v/, "")
+end
+
 def parse_release_tag(tag)
-  body = tag.to_s.sub(/^v/, "")
+  body = strip_release_tag_prefix(tag)
   if body.include?("+")
     body.split("+", 2)
   else
@@ -726,15 +745,18 @@ def create_github_release_if_missing(repo_root:)
   system("git", "-C", repo_root, "fetch", "--tags", "--quiet", "origin",
          out: File::NULL, err: File::NULL)
 
-  # Find the most-recent `vMARKETING+*` tag (the actual build being submitted).
-  tag = `cd #{repo_root.shellescape} && git tag --sort=-creatordate --list 'v#{marketing}+*' 2>/dev/null`.lines.first&.strip
+  # Find the most-recent `<prefix>MARKETING+*` tag (the actual build being
+  # submitted). Globbing a hardcoded `v` here would silently find nothing once a
+  # repo sets RELEASE_TAG_PREFIX, and the GH release would just be "skipped".
+  pfx = release_tag_prefix
+  tag = `cd #{repo_root.shellescape} && git tag --sort=-creatordate --list '#{pfx}#{marketing}+*' 2>/dev/null`.lines.first&.strip
   if tag.nil? || tag.empty?
-    # Fall back to bare `vMARKETING` if no `+BUILD` variants exist (e.g. a
+    # Fall back to bare `<prefix>MARKETING` if no `+BUILD` variants exist (e.g. a
     # marketing version that pre-dates the v1.7 tag scheme).
-    tag = `cd #{repo_root.shellescape} && git tag --sort=-creatordate --list 'v#{marketing}' 2>/dev/null`.lines.first&.strip
+    tag = `cd #{repo_root.shellescape} && git tag --sort=-creatordate --list '#{pfx}#{marketing}' 2>/dev/null`.lines.first&.strip
   end
   if tag.nil? || tag.empty?
-    UI.important("GH Release: no `v#{marketing}*` tag found locally (run `make ship` first or fetch tags); skipping.")
+    UI.important("GH Release: no `#{pfx}#{marketing}*` tag found locally (run `make ship` first or fetch tags); skipping.")
     return
   end
 
@@ -1652,7 +1674,7 @@ platform :ios do
     changelog_arg  = options[:changelog]
 
     repo_root = File.expand_path("..", __dir__)
-    version   = tag.sub(/^v/, "")
+    version   = strip_release_tag_prefix(tag)
     dry_run   = skip_upload || skip_tag
 
     # PLATFORMS gates which targets get built/signed/uploaded.

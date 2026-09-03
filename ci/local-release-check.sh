@@ -102,7 +102,13 @@ with_timestamp_retry() {
 # Apple Distribution cert SHA-1 resolver — shared library; SHA-pinned across consumer repos.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/resolve-dist-cert-sha.sh"
 
-VERSION="${TAG#v}"
+# Release tag prefix. `-` not `:-`, so an explicitly empty RELEASE_TAG_PREFIX
+# (bare `1.0.0+5` tags) is honoured rather than coerced back to `v`. Canonical
+# definition and rationale: Bootstrap::Version.tag_prefix.
+RELEASE_TAG_PREFIX="${RELEASE_TAG_PREFIX-v}"
+VERSION="${TAG#"$RELEASE_TAG_PREFIX"}"
+# Fall back to a bare `v` so a tag cut BEFORE a prefix change still parses.
+[ "$VERSION" = "$TAG" ] && VERSION="${TAG#v}"
 # Tag carries marketing version and (new format) build number:
 #   v1.0.0+5                  → MARKETING=1.0.0, BUILD=5  (apple-shipkit v1.7+ default)
 #   v0.YYYY.WW-canary-N-gen   → MARKETING=0.YYYY.WW, BUILD=$RELEASE_BUILD_NUMBER (canary)
@@ -186,10 +192,13 @@ esac
 # ── Tag format check ──────────────────────────────────────────────────────────
 
 step "Tag format"
-if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$'; then
+# Checked on the STRIPPED version rather than the raw tag, so the rule is about
+# the version body and holds for any RELEASE_TAG_PREFIX. Matching a hardcoded
+# `^v` here would reject every tag the moment a repo set a prefix.
+if echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$'; then
   ok "$TAG"
 else
-  fail "Tag '$TAG' does not match v[0-9]+.[0-9]+.[0-9]+(...) (e.g. v0.1.0, v0.1.0-rc1)"
+  fail "Tag '$TAG' (version body '$VERSION') does not match [0-9]+.[0-9]+.[0-9]+(...) — e.g. ${RELEASE_TAG_PREFIX}0.1.0, ${RELEASE_TAG_PREFIX}0.1.0-rc1"
 fi
 
 # ── App icon ──────────────────────────────────────────────────────────────────

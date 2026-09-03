@@ -126,7 +126,11 @@ puts "  marketing version: #{marketing || '(could not read from project file)'}"
 puts "  platforms:         #{platforms.join(', ')}"
 puts "  mode:              #{auto_submit ? 'submit_for_review=true (auto-submit)' : 'submit_for_review=false (stage only)'}"
 if auto_submit
-  puts "  GH Release:        will be created at v#{marketing}+<latest-build> if `gh` CLI is available"
+  # Read directly rather than via Bootstrap::Version.tag_prefix: this script does
+  # not load bin/lib/version_resolver.rb, and requiring it here would pull
+  # spaceship into startup for one display string. Canonical definition and
+  # rationale live in that file.
+  puts "  GH Release:        will be created at #{ENV.fetch('RELEASE_TAG_PREFIX', 'v')}#{marketing}+<latest-build> if `gh` CLI is available"
   puts "                     (set RELEASE_SKIP_GH_RELEASE=true to disable)"
 else
   puts "  GH Release:        skipped (only created on actual submit, not staging)"
