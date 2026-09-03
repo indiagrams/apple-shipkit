@@ -238,6 +238,92 @@ jobs:
           # Print without secrets for log clarity
           grep -vE "^(ASC_API_KEY_ID|ASC_API_KEY_ISSUER_ID|FASTLANE_TEAM_ID)=" smoketest/.bootstrap.env || true
 
+      # THE FIXTURE MUST DO WHAT A FORKER NOW DOES: EDIT app/Identity.xcconfig.
+      #
+      # Identity is the four keys of that tracked file. bin/rename.sh no longer
+      # writes them and nothing defaults them, so a fixture that materializes only
+      # .bootstrap.env is describing the RETIRED model. Before the retirement this
+      # step did not need to exist: the pipeline's rename step shelled out to
+      # bin/rename.sh, which rewrote the xcconfig to match the synthesized env, so
+      # the two agreed because something made them agree at runtime. Remove the
+      # thing that made them agree and the fixture is simply stale — `make doctor`
+      # blocks at the identity step with "does not set APP_PRODUCT_NAME", exits 2,
+      # and the ci cells fail. That is the check working; this is the fixture
+      # catching up.
+      #
+      # And it removes a live cross-repo coupling that was there all along. The
+      # smoketest is CLONED from another repository, so before this step the
+      # identity under test was whatever that repository happened to carry at
+      # clone time — re-identify it and this job goes red for reasons that have
+      # nothing to do with the pull request under test. Now the fixture states its
+      # own identity.
+      #
+      # EDITED IN PLACE, not rewritten from a heredoc: that keeps the file's own
+      # comments and its `#include?` of the gitignored per-clone signing config,
+      # and a fifth key added to the template later cannot be silently dropped by
+      # a fixture that only knows about four.
+      #
+      # THE VALUES ARE READ BACK OUT OF .bootstrap.env rather than re-typed, so
+      # the two halves cannot drift apart — which is the entire defect this step
+      # exists to prevent. And every substitution is ASSERTED to have landed: a
+      # silently-failed edit would leave the fixture green-looking and put the
+      # next reader back where this one started.
+      - name: Adopt the fixture's identity in smoketest/app/Identity.xcconfig
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+            env_path = "smoketest/.bootstrap.env"
+            cfg_path = "smoketest/app/Identity.xcconfig"
+
+            # UTF-8 pinned on every read and write: COPYRIGHT carries © (U+00A9) and
+            # the file's comments carry em dashes. An unpinned read on a runner whose
+            # locale is unset raises out of the first regex match rather than failing
+            # with a message anybody can act on.
+            env = {}
+            File.read(env_path, encoding: "UTF-8").each_line do |line|
+              line = line.strip
+              next if line.empty? || line.start_with?("#")
+              k, _, v = line.partition("=")
+              v = v.strip
+              v = v[1...v.index(v[0], 1).to_i] if v.start_with?("'") || v.start_with?('"')
+              env[k.strip] = v
+            end
+
+            # APP_PRODUCT_NAME must equal APP_NAME: that is exactly the comparison the
+            # identity step makes, so the fixture asserts it here rather than letting a
+            # future key rename surface as a confusing doctor block.
+            desired = {
+              "APP_PRODUCT_NAME" => env.fetch("APP_NAME"),
+              "BUNDLE_ID"        => env.fetch("BUNDLE_ID"),
+              "DISPLAY_NAME"     => env.fetch("DISPLAY_NAME"),
+              # Not taken from .bootstrap.env, which has no copyright field. A real
+              # forker replaces the shipped TODO placeholder; so does the fixture.
+              "COPYRIGHT"        => "Copyright © 2026 Doctor Matrix Fixture. All rights reserved."
+            }
+
+            text = File.read(cfg_path, encoding: "UTF-8")
+            desired.each do |key, value|
+              pattern = /^#{Regexp.escape(key)}([ \t]*)=.*$/
+              raise "#{cfg_path} has no #{key} assignment to replace" unless text.match?(pattern)
+              # Block form. A String replacement would expand \0 to the whole match and
+              # a backtick to everything before it.
+              text = text.sub(pattern) { "#{key}#{Regexp.last_match(1)}= #{value}" }
+            end
+            File.write(cfg_path, text, encoding: "UTF-8")
+
+            # PROVE IT LANDED. Re-read from disk — asserting against the string we just
+            # built in memory would pass even if the write went nowhere.
+            back = File.read(cfg_path, encoding: "UTF-8")
+            desired.each do |key, value|
+              got = back[/^#{Regexp.escape(key)}[ \t]*=[ \t]*(.*)$/, 1].to_s.strip
+              raise "#{key} is #{got.inspect} after the edit, expected #{value.inspect}" unless got == value
+            end
+            raise "APP_PRODUCT_NAME does not equal APP_NAME" unless
+              back[/^APP_PRODUCT_NAME[ \t]*=[ \t]*(.*)$/, 1].to_s.strip == env.fetch("APP_NAME")
+            puts "identity adopted:"
+            back.each_line { |l| puts "  #{l.chomp}" if l.match?(/^(APP_PRODUCT_NAME|BUNDLE_ID|DISPLAY_NAME|COPYRIGHT)[ \t]*=/) }
+          RUBY
+
       - name: Run make doctor
         working-directory: smoketest
         # ci cells expect exit 0 (everything in place — smoketest is fully bootstrapped).
