@@ -67,13 +67,13 @@ module Bootstrap
 
       yml_path = File.join(repo_root, PROJECT_YML)
       if File.exist?(yml_path)
-        from_yml = File.read(yml_path).match(/^\s*MARKETING_VERSION\s*:\s*["']?([^"'\s#]+)["']?/)
+        from_yml = File.read(yml_path, encoding: "UTF-8").match(/^\s*MARKETING_VERSION\s*:\s*["']?([^"'\s#]+)["']?/)
         return from_yml[1] if from_yml
       end
 
       swift_path = File.join(repo_root, PROJECT_SWIFT)
       if File.exist?(swift_path)
-        from_swift = File.read(swift_path).match(/"MARKETING_VERSION"\s*:\s*"([^"]+)"/)
+        from_swift = File.read(swift_path, encoding: "UTF-8").match(/"MARKETING_VERSION"\s*:\s*"([^"]+)"/)
         return from_swift[1] if from_swift
       end
 

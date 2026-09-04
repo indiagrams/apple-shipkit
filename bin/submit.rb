@@ -105,12 +105,12 @@ end
 # ─── Read marketing version for the preflight summary ────────────────────────
 def read_marketing_version
   if File.exist?("app/project.yml")
-    if (m = File.read("app/project.yml").match(/^\s*MARKETING_VERSION\s*:\s*["']?([^"'\s#]+)/))
+    if (m = File.read("app/project.yml", encoding: "UTF-8").match(/^\s*MARKETING_VERSION\s*:\s*["']?([^"'\s#]+)/))
       return m[1]
     end
   end
   if File.exist?("app/Project.swift")
-    if (m = File.read("app/Project.swift").match(/"MARKETING_VERSION"\s*:\s*"([^"]+)"/))
+    if (m = File.read("app/Project.swift", encoding: "UTF-8").match(/"MARKETING_VERSION"\s*:\s*"([^"]+)"/))
       return m[1]
     end
   end

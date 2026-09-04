@@ -39,7 +39,7 @@ unless env_path.file?
 end
 
 config = {}
-env_path.each_line do |line|
+File.read(env_path, encoding: "UTF-8").each_line do |line|
   line = line.strip
   next if line.empty? || line.start_with?("#")
   k, v = line.split("=", 2)
