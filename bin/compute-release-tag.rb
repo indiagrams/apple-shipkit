@@ -82,7 +82,7 @@ else
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
       key_id: ENV.fetch("ASC_API_KEY_ID"),
       issuer_id: ENV.fetch("ASC_API_KEY_ISSUER_ID"),
-      key: File.read(p8_path),
+      key: File.binread(p8_path),
     )
   end
 end

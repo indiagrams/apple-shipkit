@@ -113,7 +113,20 @@ module Bootstrap
 
     def self.parse(path)
       values = {}
-      path.each_line.with_index do |line, idx|
+      # UTF-8 pinned, never inherited from the locale. Ruby takes the encoding of a
+      # file it reads from the environment: with LANG and LC_ALL unset
+      # Encoding.default_external is US-ASCII, so this read hands back a String tagged
+      # US-ASCII whose bytes are not, and the `strip` on the very next line raises
+      # Encoding::CompatibilityError. Every entry point -- `make doctor`,
+      # `make bootstrap-fork`, every step -- dies there with a backtrace instead of a
+      # named refusal, BEFORE any step runs.
+      #
+      # This is not a fork-specific accident. `.bootstrap.env.example` carries 53 lines
+      # with non-ASCII bytes and bin/init-bootstrap-env.sh copies it verbatim, so the
+      # configuration this template ships IS the trigger. The raising `strip` also runs
+      # BEFORE the comment-skip below, so commenting the offending line out does not
+      # help either. Every CI runner sets a locale, which is why the suites never saw it.
+      File.read(path, encoding: "UTF-8").each_line.with_index do |line, idx|
         line = line.strip
         next if line.empty? || line.start_with?("#")
         key, _, val = line.partition("=")
@@ -1066,7 +1079,7 @@ module Bootstrap
                      when metadata_dir then EN_US_FIELD_ENV[basename]
                      end
           next if env_name && !ENV[env_name].to_s.strip.empty?
-          content = File.read(f)
+          content = File.read(f, encoding: "UTF-8")
           if content.match?(PLACEHOLDER_PATTERN)
             todos << Pathname.new(f).relative_path_from(REPO_ROOT).to_s
           elsif content.strip.empty?
@@ -1079,7 +1092,7 @@ module Bootstrap
       # for ASC_COPYRIGHT works the same as the en-US URL fields.
       copyright = root_dir.join("copyright.txt")
       if copyright.file? && ENV[COPYRIGHT_FIELD_ENV].to_s.strip.empty?
-        content = File.read(copyright)
+        content = File.read(copyright, encoding: "UTF-8")
         if content.match?(PLACEHOLDER_PATTERN)
           todos << Pathname.new(copyright).relative_path_from(REPO_ROOT).to_s
         elsif content.strip.empty?
@@ -1882,7 +1895,7 @@ module Bootstrap
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
       key_id:    ENV.fetch("ASC_API_KEY_ID"),
       issuer_id: ENV.fetch("ASC_API_KEY_ISSUER_ID"),
-      key:       File.read(p8_path),
+      key:       File.binread(p8_path),
     )
   end
 

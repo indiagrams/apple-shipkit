@@ -102,7 +102,7 @@ end
 
 # asc_env is what reaches the fastlane subprocess.
 assert_eq Bootstrap.method(:asc_env).source_location.nil?, false, "asc_env exists"
-asc_env_src = File.read(File.expand_path("../bin/lib/bootstrap.rb", __dir__))
+asc_env_src = File.read(File.expand_path("../bin/lib/bootstrap.rb", __dir__), encoding: "UTF-8")
 assert_eq asc_env_src.include?('"RELEASE_TAG_PREFIX"      => config.release_tag_prefix'), true,
           "asc_env propagates RELEASE_TAG_PREFIX to fastlane"
 
