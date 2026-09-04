@@ -34,6 +34,15 @@
 #                               importantly, when an honest derivation is left
 #                               alone.
 #
+#   encoding-regression       — every read of a file in the tracked tree must state its
+#                               encoding. Ruby takes it from the environment, so with LANG
+#                               and LC_ALL unset an unpinned read is US-ASCII and the next
+#                               strip or match raises. .bootstrap.env.example carries 53
+#                               lines with non-ASCII bytes and init-bootstrap-env.sh copies
+#                               it verbatim, so the shipped configuration is the trigger.
+#                               Stdlib-only, hermetic, and it spawns a locale-cleared child
+#                               that runs the REAL parser against that REAL example file.
+#
 #   bundle-guard-regression   — runs `make doctor` on a fresh checkout WITHOUT
 #                               `bundle install`. Asserts friendly-error path
 #                               (`Ruby gems aren't installed yet`) instead of
@@ -60,6 +69,10 @@ on:
   pull_request:
     paths:
       - 'test/parser_test.rb'
+      - 'test/encoding_test.rb'
+      - 'bin/adopt.rb'
+      - 'bin/submit.rb'
+      - 'bin/compute-release-tag.rb'
       - 'test/sh_stream_test.rb'
       - 'test/build_number_test.rb'
       - 'test/demo_account_required_test.rb'
@@ -372,6 +385,38 @@ jobs:
           bundler-cache: false  # parser_test.rb is stdlib-only; no bundle exec needed
       - name: Run parser regression fixtures
         run: ruby test/parser_test.rb
+
+  # Ruby decides the encoding of a file it reads from the environment. With LANG
+  # and LC_ALL unset — a fresh machine, a cron job, a bare container — the default
+  # is US-ASCII, so a read with no explicit encoding returns a String whose tag and
+  # whose bytes disagree. The read is silent; the next strip, concatenation or
+  # regex raises and the operator gets a backtrace where a named refusal belonged.
+  #
+  # This template shipped that. .bootstrap.env.example carries 53 lines with
+  # non-ASCII bytes, bin/init-bootstrap-env.sh copies it verbatim, and
+  # Bootstrap::Config.parse is the read every entry point goes through — so
+  # `make doctor` and `make bootstrap-fork` both died before printing a single
+  # step. Every suite stayed green because every CI runner sets a locale, which is
+  # exactly why this gate has to read source rather than wait for a runtime.
+  #
+  # Fixing one reported site at a time does not hold, so the test demands a stated
+  # verdict — pinned, binary, or an exemption with a written reason — for EVERY
+  # read in the tracked tree, and fails on a site that has none. It also spawns a
+  # locale-cleared child that runs the REAL parser against the REAL tracked
+  # example file, so a green here is behaviour and not only text.
+  #
+  # Stdlib-only and platform-agnostic, so it runs on ubuntu like the parser test.
+  encoding-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # encoding_test.rb is stdlib-only; no bundle exec needed
+      - name: Run the encoding sweep
+        run: ruby test/encoding_test.rb
 
   # `make ship` on a real release wrote a 13-line log: everything ship.rb
   # printed itself, and nothing from the fastlane run those lines described.
