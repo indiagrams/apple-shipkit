@@ -97,6 +97,8 @@ on:
       - 'bin/mint-local-certs.rb'
       - 'fastlane/Fastfile'
       - 'test/env_precedence_test.rb'
+      - 'bin/refork-smoketest.sh'
+      - 'ci/test-refork-inputs.sh'
 
 permissions:
   contents: read
@@ -555,6 +557,21 @@ jobs:
           bundler-cache: false  # stdlib-only; the guard makes no Apple calls
       - name: Run env / .bootstrap.env precedence tests
         run: ruby test/env_precedence_test.rb
+
+  # bin/refork-smoketest.sh reads its Apple inputs from a .bootstrap.env + the
+  # .p8 on disk. It used to `source ~/.config/secrets.env` and hard-require
+  # seven exported variables — the one place in the kit that still demanded the
+  # shell setup #291 refuses everywhere else, and the setup that put the
+  # smoketest's key into an unrelated project's release. The control: with those
+  # seven exported to DIFFERENT values, the generated .bootstrap.env must carry
+  # the file's values and none of the shell's. Pure bash/awk, no Apple calls.
+  refork-inputs-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run refork input-contract tests
+        run: bash ci/test-refork-inputs.sh
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in
