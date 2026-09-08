@@ -48,6 +48,10 @@ require_relative "lib/review_detail"
 
 config = Bootstrap::Config.load!
 config.validate!
+# Same wrong-account guard as bin/ship.rb, at the same earliest point: `submit`
+# mutates a live App Store listing, so authenticating as the wrong account is
+# even less recoverable here than for a TestFlight upload.
+Bootstrap.assert_no_env_file_conflicts!(config)
 
 # ─── Resolve effective platforms (PLATFORMS env wins over config) ────────────
 raw_platforms = ENV["PLATFORMS"].to_s.strip.empty? ? config.platforms.join(",") : ENV["PLATFORMS"]

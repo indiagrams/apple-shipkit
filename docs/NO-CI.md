@@ -124,6 +124,31 @@ The same `make ship` command works on your Mac as on CI. It:
 
 `<run_number>` in local mode is sourced from a local counter (`fastlane/.local_run_number`) since there's no GitHub `${{ github.run_number }}` to use.
 
+### Where the credentials come from (and what outranks what)
+
+In local-only mode `.bootstrap.env` is **authoritative**. The `ASC_API_KEY_*` /
+`FASTLANE_TEAM_ID` environment variables exist for CI, where no
+`.bootstrap.env` is present — they are not a local override mechanism.
+
+If your shell exports one of `BUNDLE_ID`, `FASTLANE_TEAM_ID`, `ASC_API_KEY_ID`
+or `ASC_API_KEY_ISSUER_ID` with a value that differs from this repo's
+`.bootstrap.env`, `make ship` **refuses before contacting Apple** and prints
+both sources with both values. It does not pick one for you: guessing either
+way can upload to the wrong Apple account.
+
+This matters most for local-only shippers, because you are the case that
+releases several projects from one Mac. A `~/.zshrc` that sources a shared
+secrets file gives every shell one project's key, and every *other* fork
+inherits it. Keep the key path in each repo's own `.bootstrap.env`
+(`ASC_API_KEY_P8_PATH`) and export nothing globally — see
+[One key per secret store, not per project](APPLE-PREREQS.md#one-key-per-secret-store-not-per-project).
+
+Deliberate override, when you really do mean the shell's account:
+
+```bash
+BOOTSTRAP_ENV_OVERRIDE_ACK=true make ship
+```
+
 ## Skipping macOS
 
 If you're shipping iPhone-only and don't want to mint a Mac Installer Distribution cert, set `PLATFORMS=ios` in `.bootstrap.env`. `make doctor` skips the macOS-specific cert check, `make ship` skips the .pkg build/upload, and CI on PRs (if you keep the workflow) runs only the iOS jobs.

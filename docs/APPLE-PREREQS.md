@@ -56,6 +56,54 @@ Once you've enrolled in the Apple Developer Program:
 - [ ] Place the `.p8` file **outside the repo** (e.g., `~/.appstoreconnect/`). The template's `.gitignore` blocks `*.p8`, but accidents happen.
 - [ ] Configure fastlane to read the API key from your local secrets path. See `fastlane/Fastfile` for the expected env vars.
 
+## One key per secret store, not per project
+
+An App Store Connect **Team Key covers every app in the team**. A key per
+project is not something you need: minting one per app multiplies the number
+of `.p8` files you have to protect for zero isolation benefit, because they all
+authenticate against the same team anyway.
+
+Separate keys by **where the secret lives**, not by which app uses it:
+
+| Key | Lives in | Used by |
+|---|---|---|
+| CI key | GitHub Secrets (`ASC_API_KEY_P8_BASE64`) | `release.yml` — every CI ship |
+| Local key | your Mac: a mode-0600 `.p8` outside the repo | `make ship` with `RELEASE_MODE=local`, `make submit`, local cert minting |
+
+One store, one key. A leak then revokes exactly one key and rotates one
+secret: leaking the CI key does not force you to re-provision your laptop, and
+a stolen laptop does not force a CI secret rotation. (Individual per-user keys
+instead of Team Keys are for humans who need distinct audit trails — not for
+automation.)
+
+### Do not source a shared secrets file from your shell profile
+
+The dangerous pattern:
+
+```bash
+# ~/.zshrc — DON'T
+source ~/.config/secrets.env   # exports ASC_API_KEY_ID, ..._ISSUER_ID, ..._P8_BASE64
+```
+
+Every shell on the machine now carries **one** project's credentials, so any
+other fork you release from a normal terminal inherits them. Before this was
+guarded, the environment silently outranked that fork's own `.bootstrap.env` —
+`make ship` in project B authenticated as project A and uploaded there, with no
+warning. Do this instead:
+
+```bash
+# Option A (recommended) — export nothing. Let each repo name its own key:
+#   .bootstrap.env:  ASC_API_KEY_P8_PATH=~/.appstoreconnect/ferry.p8
+# This is the template's default shape; no shell involvement at all.
+
+# Option B — direnv, scoped to one project directory:
+cd ~/code/ferry && direnv allow    # .envrc exports only that project's key
+```
+
+`make doctor` reports any disagreement between your shell and `.bootstrap.env`,
+and every ship path refuses outright — see
+[BOOTSTRAP.md → Which source wins](BOOTSTRAP.md#which-source-wins).
+
 ## Code-signing artifacts — DO NOT commit
 
 The `.gitignore` already blocks the common ones, but be aware:
