@@ -35,7 +35,11 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1"; echo "      expected: 
 # ─── Build the harness from the real script ───────────────────────────────────
 
 HARNESS="$WORK/harness.sh"
-awk '/^# ─── 1\. Archive/{exit} {print}' "$SCRIPT" > "$HARNESS"
+# Cut BEFORE the `gh auth status … delete_repo` preflight: that gate is about
+# GitHub permissions, not the input contract, and it fails on a bare CI runner
+# where gh is unauthenticated (it passes on a maintainer's Mac, which is
+# exactly the kind of difference that makes a test lie).
+awk '/^gh auth status/{exit} {print}' "$SCRIPT" > "$HARNESS"
 awk '/^cat > \.bootstrap\.env <<EOF/{f=1} f{print} f && /^EOF$/{n++; if(n==2) exit}' \
   "$SCRIPT" >> "$HARNESS"
 
@@ -43,6 +47,8 @@ grep -q 'require_field FASTLANE_TEAM_ID' "$HARNESS" \
   || { echo "harness missing the input-reading region — splice markers moved" >&2; exit 1; }
 grep -q 'ASC_API_KEY_P8_PATH=\$ASC_API_KEY_P8_PATH' "$HARNESS" \
   || { echo "harness missing the generation region — splice markers moved" >&2; exit 1; }
+grep -q '^gh auth status' "$SCRIPT" \
+  || { echo "splice marker 'gh auth status' not found — cut point moved" >&2; exit 1; }
 
 # ─── Fixture: the FILE's values (team B), plus a real .p8 on disk ─────────────
 
@@ -80,7 +86,10 @@ echo
 echo "=== generated .bootstrap.env carries the FILE's values, not the shell's ==="
 
 OUT="$WORK/gen"
-run_harness "$OUT" --release-mode=ci
+if ! run_harness "$OUT" --release-mode=ci; then
+  bad "harness ran cleanly"
+  sed 's/^/        /' "$OUT/stderr"
+fi
 GEN="$OUT/.bootstrap.env"
 
 field() { awk -F= -v k="$1" '$1==k{sub(/^[^=]*=/,""); print; exit}' "$GEN"; }
