@@ -100,3 +100,44 @@ There are two opt-in canaries; pick whichever matches your fork's
 
 Either way, the workflow runs against your fork's bundle ID + ASC app
 record + signing identity — same shape as the smoketest.
+
+### Reforking the smoketest (`bin/refork-smoketest.sh`)
+
+The smoketest is disposable on purpose: periodically nuking it and rebuilding
+from `HEAD` of the template is how we prove the template still produces a
+working fork. `bin/refork-smoketest.sh` does that end-to-end.
+
+**It reads its Apple inputs from a `.bootstrap.env` and the `.p8` on disk — never
+from exported shell variables.** It used to `source ~/.config/secrets.env` and
+refuse to start unless seven variables were exported, which meant running the
+canary required maintaining exactly the shell-profile setup the rest of the kit
+refuses (see [BOOTSTRAP.md → Which source wins](BOOTSTRAP.md#which-source-wins)
+and [APPLE-PREREQS.md → One key per secret store](APPLE-PREREQS.md#one-key-per-secret-store-not-per-project)).
+Those two halves asked for opposite things, and the exported credentials were
+how one project's ASC key reached another project's release.
+
+| Field | Source | Required |
+|---|---|---|
+| `FASTLANE_TEAM_ID`, `ASC_API_KEY_ID`, `ASC_API_KEY_ISSUER_ID`, `ASC_API_KEY_P8_PATH` | the `.bootstrap.env` named by `--from` | always |
+| `KEYCHAIN_PASSWORD_FILE` | same file | `--release-mode=ci` only |
+| `MATCH_PASSWORD_FILE`, `GH_PAT_FILE` | same file | carried through when present |
+| key material (base64) | the `.p8` at `ASC_API_KEY_P8_PATH` | derived at the one step that needs it |
+
+```bash
+# Defaults to the current smoketest checkout's .bootstrap.env:
+bin/refork-smoketest.sh --bundle-id=com.you.smokeapp --skip-cert-revoke
+
+# Or read the inputs from somewhere else entirely:
+bin/refork-smoketest.sh --from=~/code/other-fork/.bootstrap.env
+```
+
+A missing field fails by name **and** by file path, before anything
+destructive runs. `ASC_API_KEY_P8_BASE64` is no longer an input at all: the
+refork derives it from the `.p8` for the cert-revoke step, and `make
+bootstrap-fork` builds its own copy for the GitHub secret. `MATCH_PASSWORD`,
+`MATCH_GIT_BASIC_AUTHORIZATION` and `KEYCHAIN_PASSWORD` are not inputs either —
+match is retired, and `bootstrap-fork` generates the keychain password itself.
+
+`ci/test-refork-inputs.sh` is the control: it exports the old seven variables to
+*different* values and asserts the generated `.bootstrap.env` carries the file's
+values and none of the shell's.

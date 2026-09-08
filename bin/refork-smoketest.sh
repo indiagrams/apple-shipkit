@@ -31,10 +31,13 @@
 #     register_app_id covers it
 #   - ASC App record (verify-mode bootstrap_asc covers it)
 #
-# Required env (read from ~/.config/secrets.env):
+# Apple inputs (read from a .bootstrap.env, NOT from the shell):
 #   FASTLANE_TEAM_ID, ASC_API_KEY_ID, ASC_API_KEY_ISSUER_ID,
-#   ASC_API_KEY_P8_BASE64, MATCH_PASSWORD, MATCH_GIT_BASIC_AUTHORIZATION,
-#   KEYCHAIN_PASSWORD
+#   ASC_API_KEY_P8_PATH  — required
+#   KEYCHAIN_PASSWORD_FILE — required when --release-mode=ci
+#   MATCH_PASSWORD_FILE, GH_PAT_FILE — carried through when present
+# Defaults to the current smoketest checkout's .bootstrap.env; --from overrides.
+# Key material is read from the .p8 that file points at.
 #
 # Required `gh auth` scopes: delete_repo + repo
 #
@@ -51,6 +54,8 @@
 #   --skip-cert-revoke              Skip revoking "Created via API" certs — REQUIRED
 #                                   when the Apple team is shared with other apps
 #                                   (a team-wide revoke kills co-tenant certs)
+#   --from=PATH                     .bootstrap.env to read Apple inputs from
+#                                   (default: <smoketest checkout>/.bootstrap.env)
 #   -h, --help                      Show this message
 
 set -euo pipefail
@@ -61,6 +66,7 @@ KEEP_CERTS=true
 GENERATOR=xcodegen
 RELEASE_MODE=ci
 SKIP_CERT_REVOKE=false
+FROM_ENV_FLAG=""
 
 usage() {
   awk '/^# Usage:/{flag=1} flag && /^[^#]/{exit} flag{sub(/^# ?/, ""); print}' "$0"
@@ -76,6 +82,7 @@ while [ $# -gt 0 ]; do
     --bundle-id=*)            BUNDLE_ID="${1#*=}" ;;
     --asc-app-name=*)         ASC_APP_NAME="${1#*=}" ;;
     --skip-cert-revoke)       SKIP_CERT_REVOKE=true ;;
+    --from=*)                 FROM_ENV_FLAG="${1#*=}" ;;
     -h|--help)                usage 0 ;;
     *)                        echo "unknown flag: $1" >&2; usage 64 ;;
   esac
@@ -113,21 +120,100 @@ CLONE_DIR="$CLONE_PARENT/ios-macos-smoketest"
 echo "Refork smoketest — generator=$GENERATOR release_mode=$RELEASE_MODE certs=$([ "$KEEP_CERTS" = true ] && echo keep || echo nuke)"
 echo
 
-[ -f "$HOME/.config/secrets.env" ] || { echo "missing ~/.config/secrets.env" >&2; exit 1; }
-set -a
-# shellcheck disable=SC1091
-source "$HOME/.config/secrets.env"
-set +a
+# ─── Apple inputs: a .bootstrap.env + the .p8 on disk, never the shell ────────
+#
+# This script used to `source ~/.config/secrets.env` and hard-require seven
+# exported variables. #291 made .bootstrap.env authoritative and made a
+# contradicting shell fatal on every release path — so that requirement asked
+# the operator to maintain precisely the setup the rest of the kit now refuses:
+# a shell profile exporting one project's Apple credentials. That profile line
+# is how the smoketest's ASC key reached an unrelated project's release.
+#
+# Inputs are file-shaped now, the same shape every fork already keeps. Of the
+# old seven, only three were ever written into the fresh fork. The rest were
+# not inputs at all:
+#   ASC_API_KEY_P8_BASE64  — needed only by step 2's fastlane child, and
+#     derived there from the .p8. `make bootstrap-fork` builds its own copy for
+#     the GH secret via Bootstrap::GHSecrets (`expand_path(...P8_PATH).read`).
+#   MATCH_PASSWORD / MATCH_GIT_BASIC_AUTHORIZATION — match is retired; see
+#     release.yml's header ("no companion repo, MATCH_PASSWORD, or
+#     MATCH_GIT_BASIC_AUTHORIZATION") and Fastfile's sigh-based release lane.
+#   KEYCHAIN_PASSWORD — bootstrap-fork generates it into KEYCHAIN_PASSWORD_FILE
+#     when the file is absent (`ensure_random_password`).
+FROM_ENV="${FROM_ENV_FLAG:-$CLONE_DIR/.bootstrap.env}"
 
-# Validate required secrets vars are populated
-for k in FASTLANE_TEAM_ID ASC_API_KEY_ID ASC_API_KEY_ISSUER_ID ASC_API_KEY_P8_BASE64 \
-         MATCH_PASSWORD MATCH_GIT_BASIC_AUTHORIZATION KEYCHAIN_PASSWORD; do
-  v="${!k:-}"
-  # SC2088: the tilde here is display text naming the file we just sourced (see
-  # the `source "$HOME/..."` above), not a path this line expands or uses.
-  # shellcheck disable=SC2088
-  [ -n "$v" ] || { echo "~/.config/secrets.env missing $k" >&2; exit 1; }
-done
+fail_field() {
+  echo "ERROR: $1" >&2
+  echo >&2
+  echo "  bin/refork-smoketest.sh reads the smoketest's Apple inputs from a" >&2
+  echo "  .bootstrap.env, never from exported shell variables. See #291 and" >&2
+  echo "  docs/APPLE-PREREQS.md 'One key per secret store, not per project'." >&2
+  echo "  Read them from a different file with:" >&2
+  echo "    bin/refork-smoketest.sh --from=/path/to/.bootstrap.env" >&2
+  exit 1
+}
+
+[ -f "$FROM_ENV" ] \
+  || fail_field "no .bootstrap.env to read Apple inputs from: $FROM_ENV"
+
+# Value semantics mirror Bootstrap::Config.parse: skip comment lines, strip one
+# surrounding quote pair, and drop an inline ` #` comment on unquoted values.
+env_get() {
+  awk -v want="$1" '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*#/ { next }
+    {
+      eq = index($0, "=")
+      if (eq == 0) next
+      name = substr($0, 1, eq - 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (name != want) next
+      val = substr($0, eq + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+      q = substr(val, 1, 1)
+      if (q == "\"" || q == "\x27") {
+        rest = substr(val, 2)
+        at = index(rest, q)
+        val = (at > 0) ? substr(rest, 1, at - 1) : rest
+      } else if (match(val, /[[:space:]]#/)) {
+        val = substr(val, 1, RSTART - 1)
+        gsub(/[[:space:]]+$/, "", val)
+      }
+      print val
+      exit
+    }
+  ' "$FROM_ENV"
+}
+
+require_field() {
+  local v
+  v="$(env_get "$1")"
+  [ -n "$v" ] || fail_field "$1 is missing or empty in $FROM_ENV"
+  printf '%s' "$v"
+}
+
+echo "Apple inputs ← $FROM_ENV"
+FASTLANE_TEAM_ID="$(require_field FASTLANE_TEAM_ID)"           || exit 1
+ASC_API_KEY_ID="$(require_field ASC_API_KEY_ID)"               || exit 1
+ASC_API_KEY_ISSUER_ID="$(require_field ASC_API_KEY_ISSUER_ID)" || exit 1
+ASC_API_KEY_P8_PATH="$(require_field ASC_API_KEY_P8_PATH)"     || exit 1
+
+# Path-shaped secrets are carried through rather than hardcoded to
+# ~/.config/secrets/…: whatever the source fork uses is what the fresh one gets.
+KEYCHAIN_PASSWORD_FILE="$(env_get KEYCHAIN_PASSWORD_FILE)"
+MATCH_PASSWORD_FILE="$(env_get MATCH_PASSWORD_FILE)"
+GH_PAT_FILE="$(env_get GH_PAT_FILE)"
+if [ "$RELEASE_MODE" = ci ] && [ -z "$KEYCHAIN_PASSWORD_FILE" ]; then
+  fail_field "KEYCHAIN_PASSWORD_FILE is missing or empty in $FROM_ENV (required when --release-mode=ci)"
+fi
+
+# The .p8 is read twice downstream — base64 for step 2's fastlane child, and by
+# `make bootstrap-fork` later through ASC_API_KEY_P8_PATH — so prove it is
+# there now rather than several destructive steps in.
+P8_ABS="${ASC_API_KEY_P8_PATH/#\~/$HOME}"
+[ -f "$P8_ABS" ] \
+  || fail_field "ASC_API_KEY_P8_PATH names a file that does not exist: $P8_ABS (from $FROM_ENV)"
+echo "  team=$FASTLANE_TEAM_ID  key=$ASC_API_KEY_ID  p8=$ASC_API_KEY_P8_PATH"
 
 gh auth status 2>&1 | grep -qE "delete_repo" \
   || { echo "gh auth missing delete_repo scope; run: gh auth refresh -s delete_repo" >&2; exit 1; }
@@ -156,12 +242,27 @@ else
 
   if [ -d "$CLONE_DIR/fastlane" ]; then
     pushd "$CLONE_DIR" >/dev/null
-    bundle exec fastlane list_certs 2>&1 \
-      | awk '/Created via API/ { for (i=1;i<=NF;i++) if ($i ~ /^[A-Z0-9]{10}$/) { print $i; break } }' \
-      | while read -r cert_id; do
-          echo "  revoking $cert_id"
-          bundle exec fastlane revoke_cert "id:$cert_id" 2>&1 | grep -E "Revoked|error" | head -1
-        done
+    # Credentials for the fastlane child are derived from $FROM_ENV and confined
+    # to this subshell: ASC_API_KEY_P8_BASE64 (the form the Fastfile's
+    # asc_api_key reads) lives for the duration of the revoke and is never a
+    # script-level variable.
+    #
+    # These are also what #291's guard compares against this clone's own
+    # .bootstrap.env. With the default --from they ARE that file, so they agree
+    # by construction. A --from naming a different team is refused there, which
+    # is correct: revoking on a team this checkout is not configured for is
+    # exactly the ambiguity #291 exists to stop.
+    (
+      export FASTLANE_TEAM_ID ASC_API_KEY_ID ASC_API_KEY_ISSUER_ID
+      ASC_API_KEY_P8_BASE64="$(base64 < "$P8_ABS" | tr -d '\n')"
+      export ASC_API_KEY_P8_BASE64
+      bundle exec fastlane list_certs 2>&1 \
+        | awk '/Created via API/ { for (i=1;i<=NF;i++) if ($i ~ /^[A-Z0-9]{10}$/) { print $i; break } }' \
+        | while read -r cert_id; do
+            echo "  revoking $cert_id"
+            bundle exec fastlane revoke_cert "id:$cert_id" 2>&1 | grep -E "Revoked|error" | head -1
+          done
+    )
     popd >/dev/null
   else
     echo "  no local smoketest clone at $CLONE_DIR; skipping cert revocation"
@@ -267,13 +368,19 @@ RELEASE_MODE=$RELEASE_MODE
 FASTLANE_TEAM_ID=$FASTLANE_TEAM_ID
 ASC_API_KEY_ID=$ASC_API_KEY_ID
 ASC_API_KEY_ISSUER_ID=$ASC_API_KEY_ISSUER_ID
-ASC_API_KEY_P8_PATH=~/.config/secrets/AuthKey_$ASC_API_KEY_ID.p8
+ASC_API_KEY_P8_PATH=$ASC_API_KEY_P8_PATH
 GH_ORG=$ORG
 GH_APP_REPO=ios-macos-smoketest
 GH_CERTS_REPO=ios-macos-smoketest-certs
-GH_PAT_FILE=~/.config/secrets/smoketest-pat
-MATCH_PASSWORD_FILE=~/.config/secrets/match-password
-KEYCHAIN_PASSWORD_FILE=~/.config/secrets/keychain-password
+EOF
+# Carried through from $FROM_ENV, and omitted when the source file has none —
+# a fresh .bootstrap.env should not grow fields naming paths that do not exist.
+for kv in "GH_PAT_FILE=$GH_PAT_FILE" \
+          "MATCH_PASSWORD_FILE=$MATCH_PASSWORD_FILE" \
+          "KEYCHAIN_PASSWORD_FILE=$KEYCHAIN_PASSWORD_FILE"; do
+  if [ -n "${kv#*=}" ]; then printf '%s\n' "$kv" >> .bootstrap.env; fi
+done
+cat >> .bootstrap.env <<EOF
 ICON_1024_PATH=
 ASC_APP_SKU=$ASC_APP_SKU
 ASC_APP_NAME='$ASC_APP_NAME'
