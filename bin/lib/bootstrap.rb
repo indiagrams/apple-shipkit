@@ -43,6 +43,41 @@ module Bootstrap
     FASTLANE_TEAM_ID
   ].freeze
 
+  # ─── Env-var / .bootstrap.env precedence ────────────────────────────────────
+  #
+  # `.bootstrap.env` is authoritative for a LOCAL release. The ASC_API_KEY_* /
+  # FASTLANE_TEAM_ID env vars exist for CI, where no `.bootstrap.env` is
+  # present at all (release.yml exports them from GH Secrets).
+  #
+  # Until this guard existed the environment won SILENTLY, and the failure mode
+  # was the worst one this tool can have: a shell profile that exports one
+  # project's credentials (`~/.zshrc` sourcing a shared secrets file — the
+  # pattern docs/APPLE-PREREQS.md now warns against) redirected EVERY fork on
+  # the machine to that project's key and team. `make ship` in fork B would
+  # authenticate as project A and upload there, with no warning, contradicting
+  # this tool's own fail-loud-with-an-actionable-message principle. Reported
+  # 2026-09-08 from a real local release that picked up the smoketest canary's
+  # key. Every ASC token constructor + every credential-injection boundary now
+  # refuses on a disagreement, before the first Apple round-trip.
+  #
+  # These 4 keys determine WHICH Apple account a release lands in.
+  # APP_NAME is deliberately absent: it names the App ID and the build
+  # artifacts, not the destination account, and canary-local-mode.yml pins
+  # APP_NAME=canary in its synthesized file while vars.APP_NAME rides the
+  # environment on purpose — making that fatal would red-wall the canary
+  # every Saturday for a cosmetic difference.
+  ENV_FILE_AUTHORITATIVE_KEYS = %w[
+    BUNDLE_ID
+    FASTLANE_TEAM_ID
+    ASC_API_KEY_ID
+    ASC_API_KEY_ISSUER_ID
+  ].freeze
+
+  # Opt-in escape hatch for a deliberate override (running a CI-shaped release
+  # against a different account from a shell that carries its creds). Never a
+  # default: the entire point is that the silent path is gone.
+  ENV_OVERRIDE_ACK = "BOOTSTRAP_ENV_OVERRIDE_ACK"
+
   # Raised when an App Store Connect API call is rejected because a required
   # Apple agreement (Program License Agreement, Paid Applications Agreement,
   # or freshly-updated terms) is unsigned or expired. Apple gates the ENTIRE
@@ -451,6 +486,43 @@ module Bootstrap
   end
 
   # ─── Concrete steps ─────────────────────────────────────────────────────────
+
+  # Reports the env/file disagreement that Bootstrap.assert_no_env_file_conflicts!
+  # refuses on at ship time. `make doctor` is where a forker looks first, and a
+  # wrong-account upload is exactly the class of problem that has to be visible
+  # BEFORE `make ship` rather than discovered in App Store Connect afterwards.
+  # Local-only: in CI there is no .bootstrap.env for the environment to contradict.
+  class EnvFileAgreement < Step
+    MODES = %w[local].freeze
+
+    def name; "Shell env agrees with .bootstrap.env"; end
+    def category; "preflight"; end
+
+    def check
+      conflicts = Bootstrap.env_file_conflicts(config)
+      return :done if conflicts.empty?
+      # Acked = deliberate. Still surfaced (it is a loaded gun), but advisory:
+      # the operator has already said they mean it.
+      return [:warn, acked_msg(conflicts)] if Bootstrap.env_override_acked?
+
+      [:blocked, Bootstrap.env_file_conflict_message(conflicts)]
+    end
+
+    def do_it
+      UI.fail!(Bootstrap.env_file_conflict_message(Bootstrap.env_file_conflicts(config)))
+    end
+
+    private
+
+    def acked_msg(conflicts)
+      keys = conflicts.map { |c| c[:key] }.join(", ")
+      <<~MSG.strip
+        #{Bootstrap::ENV_OVERRIDE_ACK}=true is set — the shell environment overrides
+        .bootstrap.env for: #{keys}.
+        A release from this shell uses the SHELL's Apple account, not this repo's.
+      MSG
+    end
+  end
 
   class CheckAppleCreds < Step
     def name; "Apple credentials"; end
@@ -1694,6 +1766,7 @@ module Bootstrap
     # Single source of truth. Each Step subclass sets MODES = %w[ci]
     # / %w[local] / both (default). Runner filters at construction time.
     PIPELINE = [
+      EnvFileAgreement,      # local-only; must precede every ASC call below
       CheckAppleCreds,
       CheckGHCreds,
       RemoteMatches,
@@ -1859,6 +1932,9 @@ module Bootstrap
 
   def Bootstrap.ensure_asc_token!(config)
     return if Spaceship::ConnectAPI.token
+    # Before the first Apple round-trip, not after: a contradicted config here
+    # means the token would authenticate as the wrong account entirely.
+    assert_no_env_file_conflicts!(config)
     p8_path = config.expand_path("ASC_API_KEY_P8_PATH")
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
       key_id:    config["ASC_API_KEY_ID"],
@@ -1875,6 +1951,15 @@ module Bootstrap
   def setup_asc_token_from_env!
     require "spaceship"
     return if Spaceship::ConnectAPI.token
+
+    # The env path is the CI path — but it is reachable locally too (any script
+    # that prefers env when a file also exists). If a .bootstrap.env is present,
+    # it is authoritative and the ambient env must not contradict it. Parsed
+    # without validate!: this is a credential-agreement check, not a config
+    # audit, and an unrelated missing field must not mask a wrong-account run.
+    if ENV_FILE.exist?
+      assert_no_env_file_conflicts!(Config.new(Config.parse(ENV_FILE)))
+    end
 
     %w[ASC_API_KEY_ID ASC_API_KEY_ISSUER_ID].each do |k|
       raise "#{k} env var not set (and no .bootstrap.env present)." if ENV[k].to_s.empty?
@@ -1915,12 +2000,94 @@ module Bootstrap
     raise
   end
 
+  # Pure query: which authoritative keys does the ambient environment
+  # contradict? Returns [{ key:, file:, env: }, ...] — empty when the two agree,
+  # when the env is silent on a key, or when the file is silent (CI). `doctor`
+  # renders this as a row; the token constructors refuse on it.
+  def env_file_conflicts(config)
+    return [] if config.nil?
+
+    ENV_FILE_AUTHORITATIVE_KEYS.each_with_object([]) do |key, out|
+      env_val = ENV[key].to_s.strip
+      next if env_val.empty?
+      file_val = config[key].to_s.strip
+      next if file_val.empty? || file_val == env_val
+
+      out << { key: key, file: file_val, env: env_val }
+    end
+  end
+
+  def env_override_acked?
+    ENV[ENV_OVERRIDE_ACK].to_s.strip.downcase == "true"
+  end
+
+  # Names both sources and both values for every conflicting key. The ids are
+  # not secret (the .p8 is, and is never printed) and a wrong-account diagnosis
+  # is impossible without seeing which value came from where.
+  def env_file_conflict_message(conflicts)
+    rows = conflicts.map do |c|
+      "  #{c[:key]}\n      .bootstrap.env: #{c[:file]}\n      shell env:      #{c[:env]}"
+    end
+    unset = (conflicts.map { |c| c[:key] } +
+             %w[ASC_API_KEY_P8_BASE64 ASC_API_KEY_P8_PATH]).uniq.join(" ")
+
+    <<~MSG
+      Shell environment contradicts .bootstrap.env (the environment would win):
+
+      #{rows.join("\n")}
+
+      .bootstrap.env is authoritative for a local release; the ASC_API_KEY_* /
+      FASTLANE_TEAM_ID env vars exist for CI, where no .bootstrap.env is present.
+      Left unresolved, this release authenticates as — and uploads to — the
+      account named by the SHELL, not the one this repo is configured for.
+
+      Usual cause: a shell profile (~/.zshrc, ~/.bash_profile) sourcing a shared
+      secrets file, so every shell on this machine inherits ONE project's key.
+      Fix, in order of preference:
+        1. Don't export them globally. Source that secrets file only in the
+           shell where you ship the project those credentials belong to.
+        2. Clear them for this shell, then re-run:
+             unset #{unset}
+        3. Deliberate override (you really do mean the shell's account):
+             #{ENV_OVERRIDE_ACK}=true <your command>
+
+      Precedence + rationale: docs/BOOTSTRAP.md "Which source wins".
+      Key hygiene:            docs/APPLE-PREREQS.md "One key per secret store".
+    MSG
+  end
+
+  # Enforcement. Called by every ASC token constructor and every path that hands
+  # credentials to a subprocess, so no Apple call can originate from a
+  # contradicted configuration.
+  def assert_no_env_file_conflicts!(config)
+    conflicts = env_file_conflicts(config)
+    return if conflicts.empty?
+
+    if env_override_acked?
+      $stderr.puts UI.warn("#{ENV_OVERRIDE_ACK}=true — shell env overriding .bootstrap.env:")
+      conflicts.each do |c|
+        $stderr.puts UI.warn("  #{c[:key]}: using #{c[:env]} (shell), not #{c[:file]} (.bootstrap.env)")
+      end
+      return
+    end
+
+    UI.fail!(env_file_conflict_message(conflicts))
+  end
+
 
   def asc_env(config)
+    # A path that hands credentials to a subprocess is a path that can hand it
+    # the WRONG ones. Refuse before the child is spawned.
+    assert_no_env_file_conflicts!(config)
     {
       "ASC_API_KEY_ID"          => config["ASC_API_KEY_ID"],
       "ASC_API_KEY_ISSUER_ID"   => config["ASC_API_KEY_ISSUER_ID"],
       "ASC_API_KEY_P8_BASE64"   => Base64.strict_encode64(config.expand_path("ASC_API_KEY_P8_PATH").read),
+      # Pinned explicitly, not only _BASE64: setup_asc_token_from_env! prefers
+      # _P8_PATH when it is set, so a path inherited from another project would
+      # pair THAT project's key material with this fork's key id — a
+      # mismatched-key auth failure at best, the wrong key at worst.
+      "ASC_API_KEY_P8_PATH"     => config.expand_path("ASC_API_KEY_P8_PATH").to_s,
       "FASTLANE_TEAM_ID"        => config["FASTLANE_TEAM_ID"],
       # RELEASE_MODE is preserved as a `bin/ship.rb` knob (route lane locally
       # vs trigger CI workflow), but the release lane itself no longer

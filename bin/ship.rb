@@ -33,6 +33,11 @@ require_relative "lib/bootstrap"
 
 config  = Bootstrap::Config.load!
 config.validate!
+# Earliest possible refusal: before the spaceship require, before the tag
+# computation, before any Apple round-trip. A shell that exports another
+# project's ASC credentials would otherwise silently redirect this release to
+# that project's account.
+Bootstrap.assert_no_env_file_conflicts!(config)
 
 dry_run = ARGV.include?("--dry-run") ? "true" : "false"
 force   = ARGV.include?("--force")

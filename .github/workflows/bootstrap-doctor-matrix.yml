@@ -96,6 +96,7 @@ on:
       - '.bootstrap.env.example'
       - 'bin/mint-local-certs.rb'
       - 'fastlane/Fastfile'
+      - 'test/env_precedence_test.rb'
 
 permissions:
   contents: read
@@ -533,6 +534,27 @@ jobs:
           bundler-cache: false  # stdlib-only; spaceship is stubbed in test/stubs/
       - name: Run release tag prefix tests
         run: ruby test/tag_prefix_test.rb
+
+  # The .bootstrap.env / shell-environment precedence guard. Until 2026-09-08 the
+  # ambient environment won SILENTLY, so a shell profile that exported one
+  # project's ASC credentials redirected every OTHER fork on that machine to
+  # that project's Apple account — a wrong-account upload with no warning.
+  # Two properties this job defends: the refusal still fires (naming both
+  # sources and both values), and the key list duplicated in fastlane/Fastfile
+  # has not drifted from Bootstrap's. The Fastfile keeps its own copy on purpose
+  # (it takes no bin/lib load-path dependency), and a silent drift there
+  # re-opens the hole for every hand-run lane and for `make release-dryrun`.
+  env-precedence-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # stdlib-only; the guard makes no Apple calls
+      - name: Run env / .bootstrap.env precedence tests
+        run: ruby test/env_precedence_test.rb
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in

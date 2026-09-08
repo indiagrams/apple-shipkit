@@ -89,12 +89,17 @@ end
 # entire file byte-equivalent across apple-shipkit, ios-macos-smoketest,
 # and every downstream fork.
 #
-# Resolution chain (first non-nil wins):
+#   Resolution chain (first non-nil wins):
 #   1. ENV["APP_NAME"]  / ENV["BUNDLE_ID"]   — workflow secrets, manual override
 #   2. <repo-root>/.bootstrap.env values     — per-fork tracked config
 #   3. Template fallbacks ("HelloApp" / "com.example.helloapp") — fail-loud
 #      defaults; if a real ship hits these, the cert / bundle-id lookups
 #      against Apple will surface "not registered" immediately.
+#
+# ENV-first is for CI, where no .bootstrap.env exists. When BOTH are present
+# and they DISAGREE on a key that decides which Apple account the release
+# lands in, the chain does not silently resolve — it refuses. See
+# _assert_env_matches_fork_config! below.
 #
 # IOS_SCHEME, MACOS_SCHEME, IPA_NAME_PATTERN and PKG_NAME_PATTERN are NOT
 # derived from APP_NAME: the project structure (app/App.xcodeproj, the
@@ -132,7 +137,91 @@ MACOS_SCHEME       = "App-macOS"
 IPA_NAME_PATTERN   = "App-%s.ipa"   # printf with version; written by ci/local-release-check.sh
 PKG_NAME_PATTERN   = "App-%s.pkg"
 
+# ─── Env-var / .bootstrap.env agreement ───────────────────────────────────────
+#
+# Mirrors Bootstrap::ENV_FILE_AUTHORITATIVE_KEYS in bin/lib/bootstrap.rb.
+# Duplicated rather than require_relative'd deliberately (see read_text above:
+# this file keeps its single require and gains no bin/lib load-path
+# dependency). test/env_precedence_test.rb asserts the two lists stay
+# identical, so the duplication cannot drift unnoticed.
+#
+# Why this file needs its own copy at all: `bin/ship.rb` and `bin/submit.rb`
+# inject the file's credentials via Bootstrap.asc_env, but a lane invoked
+# directly — `make release-dryrun` (Makefile), `bundle exec fastlane <lane>`
+# by hand — has no bin/ wrapper, so it reads whatever the shell exported.
+# Every lane reaches Apple through before_all -> asc_api_key, which makes
+# asc_api_key the one chokepoint that covers all of them.
+ENV_FILE_AUTHORITATIVE_KEYS = %w[
+  BUNDLE_ID
+  FASTLANE_TEAM_ID
+  ASC_API_KEY_ID
+  ASC_API_KEY_ISSUER_ID
+].freeze
+
+# Re-reads .bootstrap.env rather than closing over the _FORK_CONFIG local:
+# a leading-underscore name is a local variable, not a constant, so it is not
+# in scope inside a method body. One small file read per lane invocation.
+def _env_file_conflicts
+  fork_config = _fork_config
+  ENV_FILE_AUTHORITATIVE_KEYS.each_with_object([]) do |key, out|
+    env_val  = ENV[key].to_s.strip
+    file_val = fork_config[key].to_s.strip
+    next if env_val.empty? || file_val.empty? || env_val == file_val
+
+    out << [key, file_val, env_val]
+  end
+end
+
+def _assert_env_matches_fork_config!
+  conflicts = _env_file_conflicts
+  return if conflicts.empty?
+
+  if ENV["BOOTSTRAP_ENV_OVERRIDE_ACK"].to_s.strip.downcase == "true"
+    conflicts.each do |key, file_val, env_val|
+      UI.important(
+        "BOOTSTRAP_ENV_OVERRIDE_ACK=true — #{key}: using #{env_val} (shell env), " \
+        "not #{file_val} (.bootstrap.env)"
+      )
+    end
+    return
+  end
+
+  rows = conflicts.map do |key, file_val, env_val|
+    "  #{key}\n      .bootstrap.env: #{file_val}\n      shell env:      #{env_val}"
+  end
+  unset = (conflicts.map(&:first) + %w[ASC_API_KEY_P8_BASE64 ASC_API_KEY_P8_PATH]).uniq.join(" ")
+
+  UI.user_error!(<<~MSG)
+    Shell environment contradicts .bootstrap.env (the environment would win):
+
+    #{rows.join("\n")}
+
+    .bootstrap.env is authoritative for a local release; the ASC_API_KEY_* /
+    FASTLANE_TEAM_ID env vars exist for CI, where no .bootstrap.env is present.
+    Left unresolved, this lane authenticates as — and uploads to — the account
+    named by the SHELL, not the one this repo is configured for.
+
+    Usual cause: a shell profile (~/.zshrc, ~/.bash_profile) sourcing a shared
+    secrets file, so every shell on this machine inherits ONE project's key.
+    Fix, in order of preference:
+      1. Don't export them globally. Source that secrets file only in the
+         shell where you ship the project those credentials belong to.
+      2. Clear them for this shell, then re-run:
+           unset #{unset}
+      3. Deliberate override (you really do mean the shell's account):
+           BOOTSTRAP_ENV_OVERRIDE_ACK=true <your command>
+
+    Precedence + rationale: docs/BOOTSTRAP.md "Which source wins".
+    Key hygiene:            docs/APPLE-PREREQS.md "One key per secret store".
+  MSG
+end
+
 def asc_api_key
+  # Wrong-account guard, before any Apple round-trip. before_all calls this for
+  # every lane, so a contradicted configuration cannot reach App Store Connect
+  # from any entry point — wrapped or hand-run.
+  _assert_env_matches_fork_config!
+
   # Decode .p8 to a tmpfile and pass key_filepath instead of key_content +
   # is_key_content_base64. The latter route hits a fastlane 2.233.x bug on
   # macos-15 + Ruby 3.3.11 + OpenSSL 3.6.x where Token.create raises
