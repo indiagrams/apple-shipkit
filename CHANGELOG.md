@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `bin/migrate-identity.rb` — **a fork that pinned `PRODUCT_NAME` migrates instead of exiting 4** (#293). The only fix App Review accepts for a Guideline 5.2.5 rejection of `<N>-macOS` is a literal `PRODUCT_NAME: <N>` on each app target, usually with `TEST_HOST` spelled from the same literal and `PRODUCT_MODULE_NAME` pinned so the module every test imports keeps its name. The rewriter's post-conditions counted only the `$(APP_PRODUCT_NAME)` spellings, so exactly that fork was refused — `yml-product-name`, `yml-test-host` and `yml-bundle-loader` at 0 — and had the counters been met, the substring residual scan would have refused it again over `<N>_iOS` and a usage-description string.
+
+  A literal `PRODUCT_NAME` equal to the value the build resolves now becomes `$(APP_PRODUCT_NAME)` in place, on both generators; a literal that disagrees is refused by name (it is a third opinion about the fork's identity, never rewritten to a reference it would not resolve to), and so is a `PRODUCT_NAME` above `targets:`. The two host paths XcodeGen and Tuist derive are respelled from `$(APP_PRODUCT_NAME)` and `BUNDLE_LOADER: $(TEST_HOST)` is authored beside a host the fork had already spelled. `PRODUCT_MODULE_NAME` is claimed unchanged. The residual check now reads the token as a whole identifier in a structural position — comments, the module name and prose are not residuals — and prose that still names the token is reported rather than refused.
+
+  Measured on the fork the issue came from: exit 0; both platforms build Release; `CFBundleName`, `CFBundleExecutable`, `CFBundleDisplayName` and `CFBundleIdentifier` read off the built `Info.plist`s unchanged from the pre-migration table; the macOS scheme builds for testing with `TEST_HOST` and `BUNDLE_LOADER` resolving to the built app. `test/migrate_identity_test.rb` M10 carries the shape plus both refusals, and fails by name against the previous command.
+
 ### Added
 
 - `Bootstrap::LocalSigningTeam` — **`make bootstrap-fork` writes your Apple Team ID into the gitignored `app/Local.xcconfig`**, from `FASTLANE_TEAM_ID` in `.bootstrap.env`. `bin/rename.sh --team-id=…` used to write that file and is retired in the same release; without this step the value would have no writer at all, and every fresh fork would meet the gap at its first signed build.

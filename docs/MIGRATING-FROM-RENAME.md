@@ -122,6 +122,32 @@ The built name is not the only thing derived from `PRODUCT_NAME`. Expect to revi
   searches for `"$SCHEME_IOS.app"`; after the migration your iOS scheme is `App-iOS` while
   the built bundle is `<N>.app`, so that search finds nothing.
 
+### A fork that already pins `PRODUCT_NAME`
+
+Some forks set `PRODUCT_NAME` themselves before migrating — most often because App Review
+rejected `<N>-macOS` under Guideline 5.2.5 ("Terms for macOS in the app name that displays
+on the device"), and the only fix Apple accepts is a literal `PRODUCT_NAME: <N>` on each app
+target. Such a fork usually also spells `TEST_HOST` from that literal (XcodeGen derives it
+from the host *target* name, which no longer builds) and pins `PRODUCT_MODULE_NAME` so the
+module every test file imports keeps its name.
+
+The command migrates that shape (#293), and the collapse above is a **no-op** for it: the
+build already resolves one `PRODUCT_NAME` on both platforms, so `APP_PRODUCT_NAME` takes
+that value and the built filenames do not change. What the rewrite does, per app target:
+
+| You had | You get |
+|---|---|
+| `PRODUCT_NAME: <N>` (equal to the value the build resolves) | `PRODUCT_NAME: $(APP_PRODUCT_NAME)`, in place |
+| `PRODUCT_NAME: <something else>` | **exit 4**, naming the literal — a literal that disagrees with the resolved product name is a third opinion about the fork's identity, and it is never rewritten to a reference it would not resolve to |
+| `PRODUCT_NAME:` above `targets:` (project level) | **exit 4**, naming the line — a project-level value leaks into all four test bundles |
+| `TEST_HOST: $(BUILT_PRODUCTS_DIR)/<N>.app/<N>` (or the `Contents/MacOS` form) | the same path spelled from `$(APP_PRODUCT_NAME)`, and `BUNDLE_LOADER: $(TEST_HOST)` authored beside it |
+| `PRODUCT_MODULE_NAME: <N>_iOS` | left byte-for-byte; the module name is neither identity nor structure |
+| `<N>` inside user-visible text (`NS…UsageDescription`) | left byte-for-byte, and **reported** in the run's output so you know it is still there |
+
+The Tuist manifest gets the same treatment for `"PRODUCT_NAME"`, `"PRODUCT_MODULE_NAME"`
+and `"TEST_HOST"` settings. Read the four plist keys off a Release build of the migrated
+tree anyway, as the table at the top of this section asks; the fork this was measured on did.
+
 ---
 
 ## Prerequisites

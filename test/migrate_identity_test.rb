@@ -1121,10 +1121,13 @@ end
 # backtrace where a named refusal belongs.
 def build_migration_fixture(dir, branch: "main", team_id: FIXTURE_TEAM_ID,
                             ignore_local_xcconfig: true, with_local_xcconfig: true,
-                            with_xcodeproj: true, entry_points: nil)
+                            with_xcodeproj: true, entry_points: nil,
+                            project_yml: nil, project_swift: nil)
   FileUtils.mkdir_p(dir)
-  write_file(dir, "app/project.yml", fixture_project_yml(TOKEN, team_id))
-  write_file(dir, "app/Project.swift", fixture_project_swift(TOKEN, team_id))
+  # M10 hands in the two manifests of a fork that pinned PRODUCT_NAME; every
+  # other case takes the pre-#281 shape the two builders describe.
+  write_file(dir, "app/project.yml", project_yml || fixture_project_yml(TOKEN, team_id))
+  write_file(dir, "app/Project.swift", project_swift || fixture_project_swift(TOKEN, team_id))
   write_file(dir, "app/Shared/#{TOKEN}.swift", main_swift(TOKEN))
   write_file(dir, "app/iOS/#{TOKEN}.entitlements", ENTITLEMENTS_IOS)
   write_file(dir, "app/macOS/#{TOKEN}.entitlements", ENTITLEMENTS_MACOS)
@@ -2395,6 +2398,187 @@ Dir.mktmpdir("migrate-entry-rollback") do |box|
            "the rollback left HEAD where it was (#{head_before.inspect})"
     assert porcelain_of(repo).to_s.strip.empty?, "M9-rollback",
            "the tree is clean after the rollback (#{porcelain_of(repo).inspect})"
+  end
+end
+
+# ─── M10: a fork that pinned PRODUCT_NAME (#293) ─────────────────────────────
+#
+# A fork that shipped and drew a Guideline 5.2.5 rejection ("Terms for macOS in
+# the app name that displays on the device") pins PRODUCT_NAME to a literal on
+# each app target, spells TEST_HOST from that literal because XcodeGen derives it
+# from the host TARGET name, pins PRODUCT_MODULE_NAME so the module every test
+# imports keeps its name, and carries the app's name inside a usage-description
+# string. Measured on the fork #293 came from, 2026-09-08. The rewriter's
+# post-conditions count only the $(APP_PRODUCT_NAME) spellings, so that fork
+# exited 4 at d65801d with three counters at 0 — and had the counters been met,
+# the substring residual scan would have refused it over the module name and
+# the prose. These cases put that shape on the M7/M8 tree, plus the two
+# refusals the fix must keep: a literal that DISAGREES with the product name the
+# build resolves, and a PRODUCT_NAME at project level.
+#
+# Each pin is applied by an anchor that must match EXACTLY once, so a fixture
+# builder that drifts makes this group fail by name instead of testing a shape
+# nobody intended.
+
+# `replacement` is a String inserted verbatim, or a Proc handed the MatchData —
+# never a String with `\1` in it, which String#sub's block form does not expand
+# (measured: the first draft of the Tuist host pins landed a literal `\1`).
+def pin_exactly_once(text, anchor, replacement, label)
+  count = text.scan(anchor).length
+  raise "#{label}: fixture anchor matched #{count} time(s), expected 1" unless count == 1
+
+  text.sub(anchor) { replacement.is_a?(Proc) ? replacement.call(Regexp.last_match) : replacement }
+end
+
+PINNED_PROSE = "connects to devices nearby."
+
+def pinned_project_yml(token, macos_literal: token, project_level: false)
+  yml = fixture_project_yml(token, FIXTURE_TEAM_ID)
+  yml = pin_exactly_once(yml, "        CODE_SIGN_ENTITLEMENTS: iOS/#{token}.entitlements\n",
+                         "        PRODUCT_NAME: #{token}\n" \
+                         "        PRODUCT_MODULE_NAME: #{token}_iOS\n" \
+                         "        CODE_SIGN_ENTITLEMENTS: iOS/#{token}.entitlements\n", "yml iOS pin")
+  yml = pin_exactly_once(yml, "        CODE_SIGN_ENTITLEMENTS: macOS/#{token}.entitlements\n",
+                         "        PRODUCT_NAME: #{macos_literal}\n" \
+                         "        PRODUCT_MODULE_NAME: #{token}_macOS\n" \
+                         "        CODE_SIGN_ENTITLEMENTS: macOS/#{token}.entitlements\n", "yml macOS pin")
+  yml = pin_exactly_once(yml, "        ITSAppUsesNonExemptEncryption: false\n",
+                         "        ITSAppUsesNonExemptEncryption: false\n" \
+                         "        NSLocalNetworkUsageDescription: #{token} #{PINNED_PROSE}\n", "yml prose")
+  yml = pin_exactly_once(yml, "        PRODUCT_BUNDLE_IDENTIFIER: #{FIXTURE_BUNDLE_ID}.tests\n" \
+                              "        TEST_TARGET_NAME: #{token}-iOS\n",
+                         "        PRODUCT_BUNDLE_IDENTIFIER: #{FIXTURE_BUNDLE_ID}.tests\n" \
+                         "        TEST_TARGET_NAME: #{token}-iOS\n" \
+                         "        TEST_HOST: $(BUILT_PRODUCTS_DIR)/#{token}.app/#{token}\n", "yml iOS host")
+  yml = pin_exactly_once(yml, "        PRODUCT_BUNDLE_IDENTIFIER: #{FIXTURE_BUNDLE_ID}.mactests\n" \
+                              "        TEST_TARGET_NAME: #{token}-macOS\n",
+                         "        PRODUCT_BUNDLE_IDENTIFIER: #{FIXTURE_BUNDLE_ID}.mactests\n" \
+                         "        TEST_TARGET_NAME: #{token}-macOS\n" \
+                         "        TEST_HOST: $(BUILT_PRODUCTS_DIR)/#{token}.app/Contents/MacOS/#{token}\n",
+                         "yml macOS host")
+  if project_level
+    yml = pin_exactly_once(yml, "    CODE_SIGN_STYLE: Automatic\n",
+                           "    CODE_SIGN_STYLE: Automatic\n    PRODUCT_NAME: #{token}\n", "yml project level")
+  end
+  yml
+end
+
+def pinned_project_swift(token, macos_literal: token)
+  swift = fixture_project_swift(token, FIXTURE_TEAM_ID)
+  swift = pin_exactly_once(swift, "        \"TARGETED_DEVICE_FAMILY\": \"1,2\",\n",
+                           "        \"PRODUCT_NAME\": \"#{token}\",\n" \
+                           "        \"PRODUCT_MODULE_NAME\": \"#{token}_iOS\",\n" \
+                           "        \"TARGETED_DEVICE_FAMILY\": \"1,2\",\n", "swift iOS pin")
+  swift = pin_exactly_once(swift, "        \"ASSETCATALOG_COMPILER_APPICON_NAME\": \"\",\n",
+                           "        \"PRODUCT_NAME\": \"#{macos_literal}\",\n" \
+                           "        \"PRODUCT_MODULE_NAME\": \"#{token}_macOS\",\n" \
+                           "        \"ASSETCATALOG_COMPILER_APPICON_NAME\": \"\",\n", "swift macOS pin")
+  swift = pin_exactly_once(swift, "    \"ITSAppUsesNonExemptEncryption\": false,\n",
+                           "    \"ITSAppUsesNonExemptEncryption\": false,\n" \
+                           "    \"NSLocalNetworkUsageDescription\": \"#{token} #{PINNED_PROSE}\",\n", "swift prose")
+  swift = pin_exactly_once(swift, /(let iosUnitTestTarget = .*?"TEST_TARGET_NAME": "#{Regexp.escape(token)}-iOS",\n)/m,
+                           ->(m) { "#{m[1]}        \"TEST_HOST\": \"$(BUILT_PRODUCTS_DIR)/#{token}.app/#{token}\",\n" },
+                           "swift iOS host")
+  pin_exactly_once(swift, /(let macUnitTestTarget = .*?"TEST_TARGET_NAME": "#{Regexp.escape(token)}-macOS",\n)/m,
+                   ->(m) { "#{m[1]}        \"TEST_HOST\": \"$(BUILT_PRODUCTS_DIR)/#{token}.app/Contents/MacOS/#{token}\",\n" },
+                   "swift macOS host")
+end
+
+puts
+puts "M10 — a fork that pinned PRODUCT_NAME (#293): rewired when it agrees, refused when it does not:"
+
+Dir.mktmpdir("migrate-pinned") do |box|
+  repo = File.join(box, "repo")
+  if (why = build_migration_fixture(repo, project_yml: pinned_project_yml(TOKEN),
+                                          project_swift: pinned_project_swift(TOKEN)))
+    fail_line("M10-pinned", why)
+    @checks += 1
+  else
+    # The build of a pinned fork resolves the literal on BOTH platforms, with no
+    # platform suffix — which is the whole reason the fork pinned it.
+    bin = build_tool_dir(box, ios_product: TOKEN, macos_product: TOKEN)
+    out = assert_exit ["--root", repo], EXIT_OK, ["MIGRATION COMPLETE"], "M10-pinned",
+                      "two app targets pinning PRODUCT_NAME to the value the build resolves migrate at exit 0",
+                      env: { TOOL_DIR_ENV => bin }
+
+    yml  = text_of(File.join(repo, "app/project.yml")).to_s
+    pins = yml.lines.select { |line| line.match?(/\A\s*PRODUCT_NAME:/) }.map(&:strip)
+    assert pins == ["PRODUCT_NAME: $(APP_PRODUCT_NAME)"] * 2, "M10-pinned",
+           "both pinned PRODUCT_NAME lines became $(APP_PRODUCT_NAME) in place and no third appeared " \
+           "(#{pins.inspect})"
+    assert !yml.include?("PRODUCT_NAME: App"), "M10-pinned",
+           "neither literal was swept to the structural constant App by the value-token rule"
+    assert yml.include?("PRODUCT_MODULE_NAME: #{TOKEN}_iOS\n") &&
+           yml.include?("PRODUCT_MODULE_NAME: #{TOKEN}_macOS\n"),
+           "M10-pinned", "PRODUCT_MODULE_NAME is left verbatim on both app targets — the module every test imports"
+    hosts = yml.lines.select { |line| line.match?(/\A\s*TEST_HOST:/) }.map(&:strip)
+    assert hosts == ["TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/$(APP_PRODUCT_NAME)",
+                     "TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/Contents/MacOS/$(APP_PRODUCT_NAME)"],
+           "M10-pinned", "both literal TEST_HOST paths are respelled from $(APP_PRODUCT_NAME) (#{hosts.inspect})"
+    assert yml.scan(/^\s*BUNDLE_LOADER: \$\(TEST_HOST\)$/).length == 2, "M10-pinned",
+           "BUNDLE_LOADER: $(TEST_HOST) is AUTHORED beside each host the fork had spelled " \
+           "(found #{yml.scan(/^\s*BUNDLE_LOADER:/).length})"
+    assert yml.include?("NSLocalNetworkUsageDescription: #{TOKEN} #{PINNED_PROSE}\n"), "M10-pinned",
+           "user-visible prose naming the token is left byte-for-byte"
+    assert out.to_s.include?("NSLocalNetworkUsageDescription") && out.to_s.include?("unchanged"),
+           "M10-pinned", "the report names the prose line it left rather than passing over it"
+
+    swift = text_of(File.join(repo, "app/Project.swift")).to_s
+    assert swift.scan(/"PRODUCT_NAME": "\$\(APP_PRODUCT_NAME\)"/).length == 2 &&
+           !swift.include?('"PRODUCT_NAME": "App"'),
+           "M10-pinned", "both Tuist PRODUCT_NAME settings became $(APP_PRODUCT_NAME), never \"App\""
+    assert swift.scan(/productName: "\$\(APP_PRODUCT_NAME\)"/).length == 2, "M10-pinned",
+           "productName: $(APP_PRODUCT_NAME) is still inserted on both app targets"
+    assert swift.include?("\"PRODUCT_MODULE_NAME\": \"#{TOKEN}_iOS\"") &&
+           swift.include?("\"PRODUCT_MODULE_NAME\": \"#{TOKEN}_macOS\""),
+           "M10-pinned", "the Tuist PRODUCT_MODULE_NAME settings are left verbatim"
+    assert swift.include?('"TEST_HOST": "$(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/$(APP_PRODUCT_NAME)"') &&
+           swift.include?('"TEST_HOST": "$(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/Contents/MacOS/$(APP_PRODUCT_NAME)"'),
+           "M10-pinned", "both Tuist TEST_HOST literals are respelled from $(APP_PRODUCT_NAME)"
+    assert swift.include?("\"#{TOKEN} #{PINNED_PROSE}\""), "M10-pinned",
+           "the Tuist usage-description prose is left byte-for-byte"
+  end
+end
+
+Dir.mktmpdir("migrate-pinned-disagree") do |box|
+  repo   = File.join(box, "repo")
+  legacy = "#{TOKEN}Legacy"
+  if (why = build_migration_fixture(repo, project_yml: pinned_project_yml(TOKEN, macos_literal: legacy),
+                                          project_swift: pinned_project_swift(TOKEN, macos_literal: legacy)))
+    fail_line("M10-disagree", why)
+    @checks += 1
+  else
+    bin         = build_tool_dir(box, ios_product: TOKEN, macos_product: TOKEN)
+    before      = digest_of(File.join(repo, "app/project.yml"))
+    head_before = head_of(repo)
+    assert_exit ["--root", repo], EXIT_MUTATION, [legacy, "PRODUCT_NAME", "third opinion", "rolled back"],
+                "M10-disagree",
+                "a literal that disagrees with the product name the build resolves exits 4 naming the literal",
+                env: { TOOL_DIR_ENV => bin }
+    assert digest_of(File.join(repo, "app/project.yml")) == before, "M10-disagree",
+           "app/project.yml is restored byte-identically — the disagreeing literal was not rewritten to a reference"
+    assert head_of(repo) == head_before && porcelain_of(repo).to_s.strip.empty?, "M10-disagree",
+           "HEAD is unchanged and the tree is clean after the rollback (#{porcelain_of(repo).inspect})"
+  end
+end
+
+Dir.mktmpdir("migrate-pinned-project-level") do |box|
+  repo = File.join(box, "repo")
+  if (why = build_migration_fixture(repo, project_yml: pinned_project_yml(TOKEN, project_level: true),
+                                          project_swift: pinned_project_swift(TOKEN)))
+    fail_line("M10-project-level", why)
+    @checks += 1
+  else
+    bin         = build_tool_dir(box, ios_product: TOKEN, macos_product: TOKEN)
+    before      = digest_of(File.join(repo, "app/project.yml"))
+    head_before = head_of(repo)
+    assert_exit ["--root", repo], EXIT_MUTATION, ["project level", "targets:", "rolled back"],
+                "M10-project-level",
+                "a PRODUCT_NAME above targets: is refused by name, not rewired in place",
+                env: { TOOL_DIR_ENV => bin }
+    assert digest_of(File.join(repo, "app/project.yml")) == before &&
+           head_of(repo) == head_before && porcelain_of(repo).to_s.strip.empty?,
+           "M10-project-level", "the tree is restored byte-identically after the refusal"
   end
 end
 
