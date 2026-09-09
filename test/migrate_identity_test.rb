@@ -1554,6 +1554,41 @@ Dir.mktmpdir("migrate-placeholder") do |box|
   end
 end
 
+# #296 — the placeholder refusal offered two remedies and only the second one
+# worked: its predicate read the manifests alone, so writing the Team ID into
+# app/Local.xcconfig — the file this command writes to — changed nothing, and
+# the re-run failed byte-for-byte identically. A fork holding its Team ID there
+# is AT the destination; what is left in the manifests is the template's
+# literal, which this command strips either way.
+Dir.mktmpdir("migrate-placeholder-local") do |box|
+  repo = File.join(box, "repo")
+  if (why = build_migration_fixture(repo, team_id: TEAM_ID_PLACEHOLDER))
+    fail_line("M7-team-id-local", why)
+    @checks += 1
+  else
+    local = File.join(repo, "app/Local.xcconfig")
+    File.binwrite(local, "#{LOCAL_XCCONFIG_FIXTURE}DEVELOPMENT_TEAM = #{FIXTURE_TEAM_ID}\n")
+    local_before = bytes_of(local)
+    bin = build_tool_dir(box)
+
+    out = assert_exit ["--root", repo], EXIT_OK,
+                      ["MIGRATION COMPLETE", TEAM_ID_PLACEHOLDER, "already assigns DEVELOPMENT_TEAM"],
+                      "M7-team-id-local",
+                      "a Team ID already in app/Local.xcconfig satisfies the gate the manifests' literal alone would fail",
+                      env: { TOOL_DIR_ENV => bin }
+
+    assert bytes_of(local) == local_before, "M7-team-id-local",
+           "app/Local.xcconfig is left byte-identical — a Team ID the forker put there by hand is not rewritten"
+    assert out.to_s.include?(FIXTURE_TEAM_ID), "M7-team-id-local",
+           "the report names the Team ID it accepted from app/Local.xcconfig"
+    %w[app/project.yml app/Project.swift].each do |manifest|
+      body = text_of(File.join(repo, manifest)).to_s
+      assert !body.include?(TEAM_ID_PLACEHOLDER), "M7-team-id-local",
+             "#{manifest} no longer carries the literal #{TEAM_ID_PLACEHOLDER}"
+    end
+  end
+end
+
 Dir.mktmpdir("migrate-norow") do |box|
   repo = File.join(box, "repo")
   # MEASURED on 212b489:.gitignore — a pre-#281 fork has NO app/Local.xcconfig
@@ -1783,9 +1818,15 @@ Dir.mktmpdir("migrate-write") do |box|
     # The breaking change, and the one thing this command must never say. The notice states the
     # measured change and points at the doc; Apple's tolerance of it on a live
     # listing is UNVERIFIED.
-    assert out.to_s.include?("the built bundle's filename and executable name change on at least one platform") &&
+    # Both fixture platforms resolve a suffixed name, so both move. The notice
+    # must now name WHICH platforms (#295) rather than "at least one" — the
+    # vaguer form was printed unconditionally, including on forks where nothing
+    # moved at all.
+    assert out.to_s.include?("filename and executable name") &&
+           out.to_s.include?("change on iOS and macOS") &&
            out.to_s.include?("docs/MIGRATING-FROM-RENAME.md"),
-           "M7-identity", "the collapse notice states the change and points at the migration doc"
+           "M7-identity", "the collapse notice states the change, names the platforms whose built name moves, " \
+                          "and points at the migration doc"
 
     @checks += 1
     claim = out.to_s[/apple (allows|permits)|is safe|safe to change|permitted by apple/i]
@@ -2537,6 +2578,24 @@ Dir.mktmpdir("migrate-pinned") do |box|
            "M10-pinned", "both Tuist TEST_HOST literals are respelled from $(APP_PRODUCT_NAME)"
     assert swift.include?("\"#{TOKEN} #{PINNED_PROSE}\""), "M10-pinned",
            "the Tuist usage-description prose is left byte-for-byte"
+
+    # #295 — the narrative must follow the measurement. This fork resolves the
+    # same PRODUCT_NAME on both platforms before AND after, so nothing
+    # collapses and no built name moves. The console said otherwise
+    # unconditionally, and so did the note it writes into a TRACKED file.
+    assert out.to_s.include?("PRODUCT_NAME IS ALREADY ONE VALUE") &&
+           out.to_s.include?("unchanged on both platforms"),
+           "M10-pinned", "the console reports one value and an unchanged build, matching its own measurement"
+    assert !out.to_s.include?("COLLAPSES TO ONE VALUE") &&
+           !out.to_s.include?("Nothing in this tree sets PRODUCT_NAME"),
+           "M10-pinned", "the console does not narrate a collapse, or claim nothing sets PRODUCT_NAME, on a fork that pinned it"
+
+    identity = text_of(File.join(repo, "app/Identity.xcconfig")).to_s
+    assert identity.include?("already resolved #{TOKEN} on both") &&
+           identity.include?("unchanged on both platforms"),
+           "M10-pinned", "the TRACKED provenance note records what happened: the spelling became a reference, the value did not move"
+    assert !identity.include?("nothing set PRODUCT_NAME"),
+           "M10-pinned", "the tracked note does not tell a future maintainer the built names changed when they did not"
   end
 end
 
@@ -2579,6 +2638,100 @@ Dir.mktmpdir("migrate-pinned-project-level") do |box|
     assert digest_of(File.join(repo, "app/project.yml")) == before &&
            head_of(repo) == head_before && porcelain_of(repo).to_s.strip.empty?,
            "M10-project-level", "the tree is restored byte-identically after the refusal"
+  end
+end
+
+puts
+puts "M11 — the two token-independent reports (#298):"
+
+# The premise: a fork whose template-owned workflows are BEHIND derives the
+# project path and the scheme from a repository variable whose FALLBACK is the
+# TEMPLATE's old default. Its own token therefore appears ZERO times, so the
+# token-keyed report structurally cannot see the file — measured on a real
+# migration, where the migration completed clean and left CI unable to build.
+Dir.mktmpdir("migrate-behind-workflows") do |box|
+  repo = File.join(box, "repo")
+  if (why = build_migration_fixture(repo))
+    fail_line("M11-behind", why)
+    @checks += 1
+  else
+    behind = <<~YAML
+      name: PR
+      jobs:
+        config:
+          steps:
+            - run: bash ci/check-identity.sh
+        app:
+          needs: config
+          steps:
+            - run: |
+                xcodebuild build \\
+                  -project "app/${{ vars.APP_NAME || 'TailnetDemo' }}.xcodeproj" \\
+                  -scheme  "${{ vars.APP_NAME || 'TailnetDemo' }}-iOS"
+            - run: bash ci/check-embedded-floors.sh
+    YAML
+    write_file(repo, ".github/workflows/pr.yml", behind)
+    if !git_commit_all(repo, "pre-#281 workflow")
+      fail_line("M11-behind", "could not commit the workflow fixture")
+      @checks += 1
+    else
+      assert !text_of(File.join(repo, ".github/workflows/pr.yml")).to_s.include?(TOKEN),
+             "M11-behind",
+             "the fixture workflow names the fork's token ZERO times — the premise of #298"
+
+      bin = build_tool_dir(box)
+      out = assert_exit ["--root", repo], EXIT_OK, ["MIGRATION COMPLETE"], "M11-behind",
+                        "the migration still completes — both of these are reports, not gates",
+                        env: { TOOL_DIR_ENV => bin }
+
+      assert out.to_s.include?("BUILDING A PROJECT PATH OR SCHEME FROM A VARIABLE") &&
+             out.to_s.include?(".github/workflows/pr.yml"),
+             "M11-behind",
+             "the variable-derived project path is named even though the token is absent from the file"
+      assert out.to_s.include?("ci/check-identity.sh") &&
+             out.to_s.include?("ci/check-embedded-floors.sh"),
+             "M11-behind",
+             "both kit-owned ci/ helpers the workflow invokes but this tree lacks are named"
+      assert out.to_s.include?("SKIPPED"), "M11-behind",
+             "the report states WHY a missing helper hides itself — the app cells skip, which reads as green"
+    end
+  end
+end
+
+# The false-positive control. The kit's own workflows spell the constants, and a
+# report that named them too would be noise a forker learns to scroll past.
+Dir.mktmpdir("migrate-current-workflows") do |box|
+  repo = File.join(box, "repo")
+  if (why = build_migration_fixture(repo))
+    fail_line("M11-current", why)
+    @checks += 1
+  else
+    current = <<~YAML
+      name: PR
+      jobs:
+        app:
+          steps:
+            - run: |
+                xcodebuild build -project app/App.xcodeproj -scheme App-iOS
+            - run: bash ci/check-identity.sh
+    YAML
+    write_file(repo, ".github/workflows/pr.yml", current)
+    write_file(repo, "ci/check-identity.sh", "#!/usr/bin/env bash\nexit 0\n")
+    if !git_commit_all(repo, "current workflow")
+      fail_line("M11-current", "could not commit the workflow fixture")
+      @checks += 1
+    else
+      bin = build_tool_dir(box)
+      out = assert_exit ["--root", repo], EXIT_OK, ["MIGRATION COMPLETE"], "M11-current",
+                        "a fork whose workflows are current migrates with nothing to report",
+                        env: { TOOL_DIR_ENV => bin }
+
+      assert out.to_s.include?("nothing outside app/ builds a project path or a scheme out of a variable"),
+             "M11-current",
+             "the constant form (app/App.xcodeproj, App-iOS) is NOT reported as variable-derived"
+      assert out.to_s.include?("every ci/*.sh a workflow in this tree invokes exists on disk"),
+             "M11-current", "a helper that IS on disk is not reported as missing"
+    end
   end
 end
 

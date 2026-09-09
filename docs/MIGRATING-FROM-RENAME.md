@@ -118,9 +118,52 @@ The built name is not the only thing derived from `PRODUCT_NAME`. Expect to revi
 - `TEST_HOST` and `BUNDLE_LOADER` on the unit-test bundles. **The command rewrites these for
   you** — see "What the command changes" below — because it is the migration's own
   `PRODUCT_NAME` rewrite that would otherwise break them.
-- Screenshot scripts that locate the built `.app` by name. `bin/take-readme-screenshots.sh`
-  searches for `"$SCHEME_IOS.app"`; after the migration your iOS scheme is `App-iOS` while
-  the built bundle is `<N>.app`, so that search finds nothing.
+- Screenshot scripts that locate the built `.app` by name. The kit's own
+  `bin/take-readme-screenshots.sh` resolved this from the scheme and so found nothing after
+  a migration; it now reads `PRODUCT_NAME` out of the resolved build settings instead
+  (#294). If your fork has its own screenshot or packaging script that searches for
+  `"$SCHEME_IOS.app"`, apply the same rule: the scheme is `App-iOS`, the built bundle is
+  `<APP_PRODUCT_NAME>.app`, and only the second one names the file on disk.
+
+### Sync template-owned workflows before you migrate
+
+This migration assumes your **template-owned workflows are already at the kit's current
+shape**. The kit's `pr.yml` spells the constants — `app/App.xcodeproj`, `App-iOS`,
+`App-macOS` — and reads `vars.APP_NAME` **zero** times. A fork still on the pre-#281 shape
+derives both out of a repository variable:
+
+```yaml
+-project "app/${{ vars.APP_NAME || 'TailnetDemo' }}.xcodeproj"
+-scheme  "${{ vars.APP_NAME || 'TailnetDemo' }}-iOS"
+```
+
+The fallback in that expression is the **template's** old default, not your fork's name — so
+your own token can appear zero times in the file. After the migration, CI then fails with:
+
+```
+xcodebuild: error: 'app/Tunnelless.xcodeproj' does not exist.
+```
+
+The command **reports** these and never rewrites them: rewriting would mean teaching it a
+third language's expression syntax, and a migration that half-fixes the entry points is
+worse than one that names what it did not touch. Sync `.github/workflows/` to the kit's
+current copies first, and the whole loop disappears.
+
+**The synced workflows carry kit-owned `ci/` dependencies — sync those with them.** `pr.yml`
+invokes `ci/check-identity.sh` and `ci/check-embedded-floors.sh`. Copying the workflow
+without the scripts gives:
+
+```
+bash: ci/check-identity.sh: No such file or directory
+##[error]Process completed with exit code 127
+```
+
+That kills the `config` job — the one that computes the app build matrix. Because the `app`
+cells declare `needs: config`, they do not **fail**, they go **SKIPPED**, and a skipped
+matrix reads as green on a checks board: measured on a real migration, 14 passed / 3 skipped
+/ 1 failed, with the app build proving nothing. It was caught only because branch protection
+required the six cells by name. The command reports any `ci/*.sh` a workflow in your tree
+invokes but the tree does not contain, for exactly that reason.
 
 ### A fork that already pins `PRODUCT_NAME`
 
