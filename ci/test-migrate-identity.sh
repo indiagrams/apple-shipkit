@@ -53,10 +53,16 @@
 # is a real historical rename performed by the real script on a real fork — a commit whose
 # `git show --find-renames` records the five `git mv`s rather than a regeneration that
 # reproduces them. This template has no such commit, because it is the thing being forked:
-# nothing in its history has ever been renamed away from HelloApp. A fork of it does have
-# one, and the fork this migration was built in runs both arms. Upstream runs the
-# regeneration arm alone, and that limit is stated here rather than left for a reader to
-# infer from a matrix with one cell in it.
+# nothing in its history has ever been renamed away from HelloApp.
+#
+# That arm now exists, as its own script: ci/test-historical-migration.sh drives the CURRENT
+# command against indiagrams/tunnelless@d40b915 and its parent — a real migration, on a real
+# fork, against two live App Store versions — and compares the four identity values and the
+# rename SET against what that commit actually recorded. It is a separate script rather than
+# a second cell of this one's matrix because this file builds its fixture from an ancestor of
+# THIS repository and cannot be pointed at another one by changing a ref. It is also the only
+# check here that reads a downstream repository, so an unreachable pin is a loud skip there
+# rather than a failure; this file stays hermetic and keeps no network dependency.
 #
 # The recipe cannot be "clone the current main and run bin/rename.sh", because the current
 # script performs no structural rename at all — its own comment says so: "There are no

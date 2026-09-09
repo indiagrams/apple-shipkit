@@ -39,6 +39,7 @@ on:
       # weakened while this job never fired.
       - test/migrate_identity_test.rb
       - ci/test-migrate-identity.sh
+      - ci/test-historical-migration.sh
       - .github/workflows/migrate.yml
       - app/project.yml
       - app/Project.swift
@@ -79,9 +80,13 @@ jobs:
         #           this repository has no already-renamed commit to serve as a
         #           ground-truth second arm: it is the thing being forked, and
         #           nothing in its history was ever renamed away from HelloApp.
-        #           A fork does have such a commit; the limit is stated in
-        #           ci/test-migrate-identity.sh's header rather than left to be
-        #           inferred from a matrix with one cell in it.
+        #
+        #           A fork does have such a commit, and that arm now exists — as
+        #           a STEP below (ci/test-historical-migration.sh, pinned to
+        #           indiagrams/tunnelless@d40b915) rather than as a second cell
+        #           here, because this script builds its fixture from an ancestor
+        #           of THIS repository and cannot be pointed at another one by
+        #           changing a ref.
         fixture: [212b489]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,3 +132,25 @@ jobs:
           # arbiter for the macOS UI-test target, and the Gatekeeper dialog that
           # knob exists for is a local-desktop problem, not a runner one.
         run: bash ci/test-migrate-identity.sh
+
+      # The ground-truth second arm the matrix comment above describes: the
+      # CURRENT command driven against a real historical migration on a real
+      # fork (indiagrams/tunnelless@d40b915 and its parent), which carries the
+      # pinned-PRODUCT_NAME (#293), unsubstituted-TEAM_ID_PLACEHOLDER (#296) and
+      # behind-workflows (#298) shapes simultaneously, and whose maintainer had
+      # to hand-correct the generated app/Identity.xcconfig provenance note
+      # (#295) — the regression this step watches.
+      #
+      # A STEP, not a job, for the reason given above the unit-contract step: an
+      # unrequired status context runs, reports and blocks nothing.
+      #
+      # It is also the ONLY check here that reads a downstream repository, so it
+      # is the only one that can go red without a regression in this one. An
+      # unreachable pin is therefore a LOUD skip — named on stdout and raised as
+      # a ::warning:: annotation — never a silent pass. A commit SHA is
+      # immutable, so once the fetch succeeds every assertion is a hard failure;
+      # only reaching the pin is allowed to be skipped. `continue-on-error` is
+      # deliberately NOT set: the script draws that line itself, where it can
+      # explain which side of it a given outcome fell on.
+      - name: run ci/test-historical-migration.sh (real fork, ground truth)
+        run: bash ci/test-historical-migration.sh
