@@ -156,7 +156,9 @@
 #       readonly:       false,
 #     )
 #     build_app(
-#       project:        "app/#{APP_NAME}.xcodeproj",
+#       project:        "app/App.xcodeproj",   # a CONSTANT on every fork; a
+#                                              # derived <APP_NAME>.xcodeproj
+#                                              # points at nothing (AGENTS.md)
 #       scheme:         IOS_SCHEME,
 #       configuration:  "Release",
 #       export_method:  "ad-hoc",

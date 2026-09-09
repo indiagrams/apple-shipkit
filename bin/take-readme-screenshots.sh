@@ -176,7 +176,11 @@ ok "iOS build succeeded"
 step "Boot Simulator + install + launch + capture"
 xcrun simctl boot "$DEVICE" 2>/dev/null || true   # already-booted = no-op error, harmless
 
-APP_IOS=$(find ~/Library/Developer/Xcode/DerivedData -name "$SCHEME_IOS.app" \
+# $APP_NAME, not $SCHEME_IOS: the bundle is named from PRODUCT_NAME (resolved
+# above from app/Identity.xcconfig's APP_PRODUCT_NAME), while the scheme is the
+# constant `App-iOS`. Keying this search on the scheme found nothing on every
+# fork whose product name is not literally "App-iOS" (#294).
+APP_IOS=$(find ~/Library/Developer/Xcode/DerivedData -name "$APP_NAME.app" \
             -path '*Debug-iphonesimulator*' 2>/dev/null | head -1)
 [ -n "$APP_IOS" ] && [ -d "$APP_IOS" ] || fail "iOS .app not found post-build"
 ok "app: $APP_IOS"
@@ -208,8 +212,10 @@ fi
 ok "macOS build succeeded"
 
 step "Launch macOS app + Quartz window-id query + capture"
+# Same rule as the iOS search above: PRODUCT_NAME names the bundle, the scheme
+# does not. The -path filter spelled the scheme a second time (#294).
 APP_MACOS=$(find ~/Library/Developer/Xcode/DerivedData \
-              -name "$SCHEME_MACOS.app" -path "*Debug/$SCHEME_MACOS.app*" 2>/dev/null | head -1)
+              -name "$APP_NAME.app" -path "*Debug/$APP_NAME.app*" 2>/dev/null | head -1)
 [ -n "$APP_MACOS" ] && [ -d "$APP_MACOS" ] || fail "macOS .app not found post-build"
 ok "app: $APP_MACOS"
 

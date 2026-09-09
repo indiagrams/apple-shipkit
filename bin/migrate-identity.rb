@@ -1048,16 +1048,76 @@ end
 def announce_product_name_collapse(resolved, collapsed)
   ios_raw   = resolved.fetch("iOS").fetch("product_name")
   macos_raw = resolved.fetch("macOS").fetch("product_name")
+  moving    = platforms_whose_product_name_moves(resolved, collapsed)
+
+  if moving.empty?
+    say "==== PRODUCT_NAME IS ALREADY ONE VALUE ===="
+    say "  before, iOS:   PRODUCT_NAME = #{ios_raw}"
+    say "  before, macOS: PRODUCT_NAME = #{macos_raw}"
+    say "  after, both:   APP_PRODUCT_NAME = #{collapsed}"
+    say "Both platforms already resolve #{collapsed}, so nothing collapses: this tree sets"
+    say "PRODUCT_NAME explicitly rather than letting Xcode default it to each target's own name."
+    say "The migration changes the SPELLING to $(APP_PRODUCT_NAME), not the resolved value — the"
+    say "built bundle's filename and executable name are unchanged on both platforms."
+    return
+  end
+
   say "==== PRODUCT_NAME COLLAPSES TO ONE VALUE ===="
   say "  before, iOS:   PRODUCT_NAME = #{ios_raw}"
   say "  before, macOS: PRODUCT_NAME = #{macos_raw}"
   say "  after, both:   APP_PRODUCT_NAME = #{collapsed}"
-  say "Nothing in this tree sets PRODUCT_NAME, so Xcode defaulted it to each target's own name,"
-  say "platform suffix included. A migrated tree resolves one value on both platforms, so"
-  say "the built bundle's filename and executable name change on at least one platform; " \
-      "see docs/MIGRATING-FROM-RENAME.md before migrating a fork with a live App Store listing"
+  say "#{moving.join(' and ')} #{moving.length == 1 ? 'resolves' : 'resolve'} a PRODUCT_NAME that is " \
+      "not #{collapsed}: nothing sets it there,"
+  say "so Xcode defaulted it to the target's own name, platform suffix included. A migrated tree"
+  say "resolves one value on both platforms, so the built bundle's filename and executable name"
+  say "change on #{moving.join(' and ')}; see docs/MIGRATING-FROM-RENAME.md before migrating a " \
+      "fork with a live App Store listing"
   say "This command reports the change and stops there. It does not judge the consequences for"
   say "your listing on your behalf, and it does not speak for Apple."
+end
+
+# Which platforms' BUILT names actually move. collapse_product_name has already
+# required both platforms to agree once a platform suffix is stripped, and to
+# equal the structural token — so the only question left is whether either RAW
+# value differs from the collapsed one.
+#
+# This is not cosmetic (#295). The answer is the sentence a forker weighs App
+# Store risk on, and it is also written into a TRACKED file. A fork that pinned
+# PRODUCT_NAME — the Guideline 5.2.5 shape #293 came from — resolves the same
+# value before and after; telling it the built names changed inverts the fact
+# its release decisions rest on, and teaches it to distrust the measurement
+# printed three lines above.
+def platforms_whose_product_name_moves(resolved, collapsed)
+  PLATFORMS.reject { |platform| resolved.fetch(platform).fetch("product_name") == collapsed }
+end
+
+# The provenance note for app/Identity.xcconfig. Tracked, so it has to be true
+# for THIS fork rather than for the common case: console output scrolls away,
+# this is committed and reads as the fork's own record of its own history.
+def product_name_provenance(collapsed, resolved)
+  ios_raw   = resolved.fetch("iOS").fetch("product_name")
+  macos_raw = resolved.fetch("macOS").fetch("product_name")
+  moving    = platforms_whose_product_name_moves(resolved, collapsed)
+
+  if moving.empty?
+    <<~NOTE.chomp
+      //
+      // BEFORE THIS MIGRATION this tree already resolved #{collapsed} on both
+      // platforms, because it set PRODUCT_NAME explicitly rather than letting Xcode
+      // default it to each target's own name. The migration changed the SPELLING to
+      // $(APP_PRODUCT_NAME) and not the resolved value: the built bundle's filename
+      // and executable name are unchanged on both platforms.
+    NOTE
+  else
+    <<~NOTE.chomp
+      //
+      // BEFORE THIS MIGRATION this tree resolved #{ios_raw} on iOS and
+      // #{macos_raw} on macOS, because nothing set PRODUCT_NAME on
+      // #{moving.join(' and ')} and Xcode defaulted it to the target's own name. It now
+      // resolves one value on both platforms, so the built bundle's filename and
+      // executable name changed on #{moving.join(' and ')}. See docs/MIGRATING-FROM-RENAME.md.
+    NOTE
+  end
 end
 
 # The four values, with the three that are not PRODUCT_NAME required to AGREE
@@ -1114,12 +1174,7 @@ def identity_xcconfig_body(values, resolved)
     // PRODUCT_NAME = $(APP_PRODUCT_NAME) in each manifest. Deliberately NOT a
     // bare project-level PRODUCT_NAME: that leaks into every target, including
     // the test bundles, and the two generators then disagree.
-    //
-    // BEFORE THIS MIGRATION this tree resolved #{ios_raw} on iOS and
-    // #{macos_raw} on macOS, because nothing set PRODUCT_NAME and Xcode
-    // defaulted it to each target's own name. It now resolves one value on both
-    // platforms, so the built bundle's filename and executable name change on at
-    // least one platform. See docs/MIGRATING-FROM-RENAME.md.
+    #{product_name_provenance(values.fetch('APP_PRODUCT_NAME'), resolved)}
     APP_PRODUCT_NAME = #{values.fetch('APP_PRODUCT_NAME')}
 
     // Feeds CFBundleDisplayName — the name under the icon — on both platforms.
@@ -1319,6 +1374,19 @@ def ensure_local_is_ignored(root)
                "(git rm --cached #{REL_LOCAL}), then re-run. Nothing was written."
 end
 
+# The Team ID already sitting where this command would put it, or nil. The
+# placeholder counts as absent: relocating it would report a Team ID move that
+# moved a literal.
+def local_development_team(root)
+  path = File.join(root, REL_LOCAL)
+  return nil unless File.file?(path)
+
+  value = Xcconfig.own(path)["DEVELOPMENT_TEAM"].to_s.strip
+  return nil if value.empty? || value == TEAM_ID_PLACEHOLDER
+
+  value
+end
+
 def move_team_id(root)
   found = {
     REL_PROJECT_YML   => find_development_team(File.join(root, REL_PROJECT_YML), :yaml),
@@ -1344,12 +1412,35 @@ def move_team_id(root)
   # bin/rename.sh Step H's first refusal, copied in intent: a fork that never
   # supplied a Team ID still carries the literal, and moving THAT into
   # Local.xcconfig would relocate a placeholder while reporting a Team ID move.
+  # Unless the fork already put its Team ID where this command puts it (#296).
+  # Then the tree is AT the destination, and what is left in the manifests is
+  # only the template's literal — which this command strips either way. Refusing
+  # that was the same bug class as #293: a correct end state rejected for how it
+  # was reached. Worse, the refusal's own first remedy — write app/Local.xcconfig
+  # — could not satisfy a predicate that read only the manifests, so the message
+  # offered two remedies of which one silently did nothing.
+  #
+  # Nothing below is special-cased for this: team_id becomes the value already on
+  # disk, so the tail of this function takes its `current == team_id` branch,
+  # leaves app/Local.xcconfig untouched, and strips the literal from both manifests.
   if team_id == TEAM_ID_PLACEHOLDER
-    fail_with 4, "#{present.keys.join(' and ')} still carr#{present.length == 1 ? 'ies' : 'y'} " \
-                 "the unsubstituted literal #{TEAM_ID_PLACEHOLDER}. There is no Apple Team ID in " \
-                 "this tree to move. Put your Team ID in #{REL_LOCAL} yourself " \
-                 "(DEVELOPMENT_TEAM = <ten characters>), or set it in the manifests first, then " \
-                 "re-run."
+    local_team = local_development_team(root)
+    if local_team.nil?
+      fail_with 4, "#{present.keys.join(' and ')} still carr#{present.length == 1 ? 'ies' : 'y'} " \
+                   "the unsubstituted literal #{TEAM_ID_PLACEHOLDER}, and #{REL_LOCAL} does not " \
+                   "assign a DEVELOPMENT_TEAM either. There is no Apple Team ID in this tree to " \
+                   "move. Put your Team ID in #{REL_LOCAL} yourself " \
+                   "(DEVELOPMENT_TEAM = <ten characters>) and re-run — this command accepts a " \
+                   "Team ID already sitting there and strips the literal — or substitute it in " \
+                   "the manifests first, then re-run."
+    end
+
+    say "#{present.keys.join(' and ')} still carr#{present.length == 1 ? 'ies' : 'y'} the literal " \
+        "#{TEAM_ID_PLACEHOLDER},"
+    say "  and #{REL_LOCAL} already assigns DEVELOPMENT_TEAM = #{local_team}. That is where this"
+    say "  command puts it, so the literal is stripped from the manifests and #{REL_LOCAL} is left"
+    say "  as it is."
+    team_id = local_team
   end
   if team_id.empty?
     fail_with 4, "#{present.keys.join(' and ')} assign#{present.length == 1 ? 's' : ''} " \
@@ -2438,6 +2529,96 @@ def residual_structural_references(root, token)
   residual
 end
 
+# REPORT ONLY, and TOKEN-INDEPENDENT (#298). residual_structural_references
+# above reports a file only when the FORK'S TOKEN sits beside a project path or
+# a scheme suffix. A pre-#281 workflow builds both out of a repository variable
+# —
+#
+#   -project "app/${{ vars.APP_NAME || 'TailnetDemo' }}.xcodeproj"
+#   -scheme  "${{ vars.APP_NAME || 'TailnetDemo' }}-iOS"
+#
+# — and on a fork whose workflows are BEHIND the template, the fallback inside
+# that expression is the TEMPLATE's old default, not the fork's name. Measured
+# on a real migration (indiagrams/tunnelless#81): the fork's pre-migration
+# pr.yml contained its own token ZERO times, so it matched nothing, entered no
+# report, and the migration completed clean while leaving CI unable to build the
+# app — `xcodebuild: error: 'app/Tunnelless.xcodeproj' does not exist.`
+#
+# The thing that identifies such a file is the EXPRESSION, not the token. So
+# this rule keys on a variable expression that resolves into a project path or a
+# platform scheme, ON A LINE that also carries the flag which consumes it. That
+# adjacency is what keeps it from naming every file that merely mentions a
+# variable: measured against this repository, the kit's own constant forms
+# (`-project app/App.xcodeproj`, `-scheme App-iOS`) do not match.
+#
+# Reported, never rewritten. The argument above residual_structural_references
+# holds — rewriting this would mean teaching this command a third language's
+# expression syntax — and so does its rule: "Widening a report costs nothing;
+# narrowing one hides things."
+VARIABLE_EXPRESSION = /(?:\$\{\{[^}]*\}\}|\$\{[^}]*\}|\#\{[^}]*\})/.freeze
+VARIABLE_DERIVED_STRUCTURE = /
+  (?:-{1,2}(?:project|workspace|scheme)|(?:project|workspace|scheme):)
+  \s*\S{0,120}?#{VARIABLE_EXPRESSION}[^\s"']*
+  (?:\.xcodeproj|\.xcworkspace|-iOS|-macOS)
+/x.freeze
+
+def variable_derived_structure(root)
+  found = {}
+  # test/ is excluded, and only here: a migration fixture's job is to CONTAIN
+  # the pre-#281 shape, so flagging it would make this report name the
+  # command's own harness on every fork that carries it.
+  candidates = tracked_files(root).reject do |relative|
+    relative.start_with?("app/", "test/")
+  end
+
+  candidates.sort.each do |relative|
+    body = entry_point_body(File.join(root, relative))
+    next if body.nil?
+
+    lines = body.lines.each_with_index.filter_map do |line, index|
+      index + 1 if line.match?(VARIABLE_DERIVED_STRUCTURE)
+    end
+    found[relative] = lines unless lines.empty?
+  end
+
+  found
+end
+
+# REPORT ONLY (#298). A workflow synced from the template invokes kit-owned
+# helper scripts — measured on this repository: ci/check-identity.sh and
+# ci/check-embedded-floors.sh from pr.yml alone — and a fork that copies the
+# workflow without them gets `bash: ci/check-identity.sh: No such file or
+# directory` and exit 127.
+#
+# Why that is worth its own report rather than being left to CI: the job it
+# kills is the one that computes the app build matrix, and the app cells declare
+# `needs: config`. So they do not FAIL — they go SKIPPED, and a skipped matrix
+# reads as green on a checks board. Measured: 14 passed / 3 skipped / 1 failed,
+# with the app build proving nothing. It was caught only because branch
+# protection required the six cells BY NAME; a fork without that protection
+# would have had a mergeable PR whose app matrix never ran.
+#
+# Not a gate, deliberately. A missing helper is a property of the fork's own
+# tracked workflows that this migration neither creates nor repairs, and
+# refusing an otherwise-correct migration over a pre-existing CI defect would
+# block the population this command exists for. Named here, where the forker is
+# already reading.
+def missing_workflow_helpers(root)
+  missing = {}
+  Dir.glob(File.join(root, ".github/workflows/*.y{a,}ml")).sort.each do |path|
+    body = entry_point_body(path)
+    next if body.nil?
+
+    relative = path.sub("#{root}/", "")
+    body.scan(%r{(?<![\w./-])(ci/[A-Za-z0-9._-]+\.sh)}).flatten.uniq.each do |script|
+      next if File.file?(File.join(root, script))
+
+      (missing[script] ||= []) << relative
+    end
+  end
+  missing
+end
+
 # Pitfall 4. A stale generated project is GITIGNORED, so git status
 # cannot see it, every post-migration check reads it happily, and every one of
 # them reports green against the identity being replaced. bin/rename.sh:816-828
@@ -2676,16 +2857,56 @@ def perform_migration(root:, token:)
     end
     say "  Read #{MIGRATION_DOC} for what each of these needs, if anything."
   end
+
+  derived = variable_derived_structure(root)
+  if derived.empty?
+    say "nothing outside app/ builds a project path or a scheme out of a variable"
+  else
+    say "BUILDING A PROJECT PATH OR SCHEME FROM A VARIABLE — token-independent, so the report"
+    say "above cannot see these. A pre-#281 workflow derives both from a repository variable"
+    say "whose FALLBACK may still be the template's old default, in which case it names a"
+    say "project this tree does not contain and CI cannot build the app:"
+    derived.each { |relative, lines| say "  #{relative}:#{lines.join(',')}" }
+    say "  The kit's own copies spell the constants (app/App.xcodeproj, App-iOS, App-macOS)."
+    say "  Sync template-owned workflows to the kit's current copies; #{MIGRATION_DOC} explains why."
+  end
+
+  helpers = missing_workflow_helpers(root)
+  if helpers.empty?
+    say "every ci/*.sh a workflow in this tree invokes exists on disk"
+  else
+    say "WORKFLOWS INVOKE ci/ SCRIPTS THAT ARE NOT IN THIS TREE — exit 127 in the job that"
+    say "computes the build matrix, which makes the app cells SKIPPED rather than failed, and"
+    say "a skipped matrix reads as green on a checks board:"
+    helpers.each { |script, files| say "  #{script}  — invoked by #{files.join(', ')}" }
+    say "  Sync these from the template alongside the workflows that call them."
+  end
   say "the Apple Team ID lives only in #{REL_LOCAL}, which git confirmed is ignored"
   say "generated project: #{generated} (the stale one was removed and its absence proven)"
-  say "==== ONE BREAKING CHANGE, AND IT IS NOT REVERSIBLE BY THIS COMMAND ===="
-  say "  before, iOS:   PRODUCT_NAME = #{resolved.fetch('iOS').fetch('product_name')}"
-  say "  before, macOS: PRODUCT_NAME = #{resolved.fetch('macOS').fetch('product_name')}"
-  say "  after, both:   APP_PRODUCT_NAME = #{collapsed}"
-  say "The built bundle's filename and executable name therefore change on at least one"
-  say "platform. Read #{MIGRATION_DOC} before you ship this, especially if you"
-  say "have a LIVE App Store listing. This command reports the change; it does not judge"
-  say "the consequences for your listing, and it does not speak for Apple."
+  moving = platforms_whose_product_name_moves(resolved, collapsed)
+  if moving.empty?
+    # #295 — this fork set PRODUCT_NAME explicitly, so there is no breaking
+    # change to announce. Saying otherwise here contradicts the three measured
+    # lines below it, and this is the paragraph a forker weighs App Store risk on.
+    say "==== NO BREAKING CHANGE: PRODUCT_NAME WAS ALREADY ONE VALUE ===="
+    say "  before, iOS:   PRODUCT_NAME = #{resolved.fetch('iOS').fetch('product_name')}"
+    say "  before, macOS: PRODUCT_NAME = #{resolved.fetch('macOS').fetch('product_name')}"
+    say "  after, both:   APP_PRODUCT_NAME = #{collapsed}"
+    say "This tree set PRODUCT_NAME explicitly rather than letting Xcode default it to each"
+    say "target's own name, so the migration changed the SPELLING to $(APP_PRODUCT_NAME) and"
+    say "not the resolved value: the built bundle's filename and executable name are"
+    say "unchanged on both platforms."
+  else
+    say "==== ONE BREAKING CHANGE, AND IT IS NOT REVERSIBLE BY THIS COMMAND ===="
+    say "  before, iOS:   PRODUCT_NAME = #{resolved.fetch('iOS').fetch('product_name')}"
+    say "  before, macOS: PRODUCT_NAME = #{resolved.fetch('macOS').fetch('product_name')}"
+    say "  after, both:   APP_PRODUCT_NAME = #{collapsed}"
+    say "The built bundle's filename and executable name therefore change on " \
+        "#{moving.join(' and ')}."
+    say "Read #{MIGRATION_DOC} before you ship this, especially if you"
+    say "have a LIVE App Store listing. This command reports the change; it does not judge"
+    say "the consequences for your listing, and it does not speak for Apple."
+  end
   say "next: review the diff (git diff HEAD, and git diff --cached -M for the renames),"
   say "  build both platforms, then commit. To undo everything this run did:"
   say "  git reset --hard HEAD && git clean -fd"
