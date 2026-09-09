@@ -1606,10 +1606,67 @@ def rewrite_comment_token(line, token)
   end
 end
 
+# A YAML scalar as written: a trailing ` # comment` dropped, one layer of
+# matching quotes removed. `PRODUCT_NAME: "Tunnelless"  # 5.2.5` is the same
+# pin as `PRODUCT_NAME: Tunnelless`, and a rule that read the comment as part of
+# the value would refuse a fork over its own explanation of the pin.
+def manifest_scalar(raw)
+  value = raw.to_s.sub(/\s+#.*\z/, "").strip
+  return value[1..-2] if value.length >= 2 && value[0] == value[-1] && %w[" '].include?(value[0])
+
+  value
+end
+
+def pinned_product_name_disagrees(relative, value, token)
+  "#{relative} pins PRODUCT_NAME to #{value.inspect}, which is neither the product name the " \
+    "build resolves on both platforms (#{token.inspect}) nor $(APP_PRODUCT_NAME). " \
+    "#{REL_IDENTITY} is about to hold APP_PRODUCT_NAME = #{token}; a literal that says " \
+    "otherwise is a third opinion about this fork's identity, and this command will not " \
+    "rewrite it into a reference that resolves to something it never said. Reconcile the two " \
+    "and re-run. Nothing was written to #{relative}."
+end
+
 def project_yml_rules(token, bundle_id, insert_product_name)
   escaped = Regexp.escape(token)
   [
     # ── identity, always ahead of structure ──────────────────────────────────
+    #
+    # A pinned PRODUCT_NAME (#293). A fork that shipped and drew a Guideline
+    # 5.2.5 rejection pins PRODUCT_NAME to a literal on each app target, because
+    # the default — the TARGET name, platform suffix included — is the thing
+    # Apple refused. That literal IS the value app/Identity.xcconfig is about to
+    # hold: collapse_product_name has already required the build to resolve it
+    # on both platforms. So it becomes the reference, in place, and the app
+    # target keeps the line it already had. A literal that says anything else is
+    # a third opinion about this fork's identity and is refused BY NAME — never
+    # swept to `App` by the structural rule below, which is what a literal equal
+    # to the token would otherwise meet.
+    ["yml-product-name-literal", /\A(\s*)PRODUCT_NAME:\s*(\S.*?)\s*\z/,
+     lambda { |match, _line|
+       value = manifest_scalar(match[2])
+       next nil if value == "$(APP_PRODUCT_NAME)"
+       next ["#{match[1]}PRODUCT_NAME: $(APP_PRODUCT_NAME)"] if value == token
+
+       fail_with 4, pinned_product_name_disagrees(REL_PROJECT_YML, value, token)
+     }],
+    # PRODUCT_MODULE_NAME is the Swift module every source and test file imports
+    # (`@testable import <N>_iOS`, measured on the fork #293 came from). It is
+    # neither identity nor structure, and renaming it is a source-wide edit this
+    # command does not make — so the line is CLAIMED here, unchanged, where a
+    # value equal to the bare token would otherwise be swept to `App` by
+    # yml-value-token and every import in the fork would stop compiling.
+    ["yml-module-name", /\A\s*PRODUCT_MODULE_NAME:\s*\S/,
+     ->(_match, line) { [line] }],
+    # The same fork spelled TEST_HOST from the literal, for the reason
+    # yaml_insert_test_host documents: XcodeGen derives it from the host TARGET
+    # name and the pinned product never builds there. Only the exact two shapes
+    # XcodeGen's own derivation produces are rewired; any other literal host is
+    # the forker's and is left, and the yml-test-host count then names it.
+    ["yml-test-host-literal",
+     %r{\A(\s*)TEST_HOST:\s*\$\(BUILT_PRODUCTS_DIR\)/#{escaped}\.app/(Contents/MacOS/)?#{escaped}\s*\z},
+     lambda { |match, _line|
+       ["#{match[1]}TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(APP_PRODUCT_NAME).app/#{match[2]}$(APP_PRODUCT_NAME)"]
+     }],
     ["yml-bundle-id", /\A(\s*)PRODUCT_BUNDLE_IDENTIFIER:\s*(\S.*?)\s*\z/,
      lambda { |match, _line|
        reference = bundle_reference(match[2], bundle_id)
@@ -1659,6 +1716,27 @@ end
 def project_swift_rules(token, bundle_id)
   escaped = Regexp.escape(token)
   [
+    # The Tuist spellings of the three pinned-fork lines project_yml_rules
+    # documents (#293): the literal PRODUCT_NAME becomes the reference when it
+    # equals the value the build resolves and is refused by name otherwise; the
+    # module name is claimed unchanged; the two host paths XcodeGen/Tuist derive
+    # are respelled from the product name. Each sits ahead of
+    # swift-structural-literal, which would otherwise rewrite "<N>" to "App"
+    # inside the first and the last of them.
+    ["swift-product-name-literal", /\A(\s*"PRODUCT_NAME":\s*")([^"]*)("\s*,?)\s*\z/,
+     lambda { |match, _line|
+       next nil if match[2] == "$(APP_PRODUCT_NAME)"
+       next ["#{match[1]}$(APP_PRODUCT_NAME)#{match[3]}"] if match[2] == token
+
+       fail_with 4, pinned_product_name_disagrees(REL_PROJECT_SWIFT, match[2], token)
+     }],
+    ["swift-module-name", /\A\s*"PRODUCT_MODULE_NAME":\s*"/,
+     ->(_match, line) { [line] }],
+    ["swift-test-host-literal",
+     %r{\A(\s*"TEST_HOST":\s*"\$\(BUILT_PRODUCTS_DIR\)/)#{escaped}(\.app/(?:Contents/MacOS/)?)#{escaped}("\s*,?)\s*\z},
+     lambda { |match, _line|
+       ["#{match[1]}$(APP_PRODUCT_NAME)#{match[2]}$(APP_PRODUCT_NAME)#{match[3]}"]
+     }],
     ["swift-bundle-id", /\A(\s*(?:bundleId:|"PRODUCT_BUNDLE_IDENTIFIER":)\s*")([^"]*)("\s*,?)\s*\z/,
      lambda { |match, _line|
        reference = bundle_reference(match[2], bundle_id)
@@ -1846,7 +1924,8 @@ def yaml_insert_test_host(body)
     block = lines[(index + 1)..last] || []
     if block.any? { |row| row.match?(/\A\s*type:\s*bundle\.unit-test\s*\z/) }
       unit_tests += 1
-      unless block.any? { |row| row.match?(/\A\s*TEST_HOST:/) }
+      host_row = block.index { |row| row.match?(/\A\s*TEST_HOST:/) }
+      if host_row.nil?
         host_at = block.index { |row| row.match?(/\A\s*TEST_TARGET_NAME:/) }
         unless host_at.nil?
           mac    = block.any? { |row| row.match?(/\A\s*platform:\s*macOS\s*\z/) } ||
@@ -1863,6 +1942,16 @@ def yaml_insert_test_host(body)
                        "#{indent}BUNDLE_LOADER: $(TEST_HOST)\n")
           inserted += 1
         end
+      elsif block.none? { |row| row.match?(/\A\s*BUNDLE_LOADER:/) }
+        # A fork that spelled TEST_HOST itself (#293) had no BUNDLE_LOADER to
+        # spell — the literal host path was complete without one — so there is
+        # nothing to rewrite and the yml-bundle-loader count cannot be met by a
+        # rewrite. It is AUTHORED, beside the host it follows, so the migrated
+        # manifest has the one shape the post-conditions and this template's
+        # own app/project.yml describe.
+        indent = block[host_row][/\A */]
+        block  = block.dup
+        block.insert(host_row + 1, "#{indent}BUNDLE_LOADER: $(TEST_HOST)\n")
       end
     end
 
@@ -1938,14 +2027,74 @@ end
 # BODY, because "the rule ran" and "the file now says this" are different claims
 # and only the second one is what ships. A fork that already carried one of these
 # keys would make a fired-rule count zero and the file correct.
-def residual_token_lines(body, token)
+# A residual is the token in a STRUCTURAL position after the rewrite: a whole
+# identifier — not the head of a longer one, so `<N>_iOS` is not one — on a line
+# that is neither a comment nor prose. The plain substring scan this replaced
+# refused a real fork (#293) over lines none of which was a half-rewired
+# manifest: `PRODUCT_MODULE_NAME: <N>_iOS` (the module every test imports, kept
+# by the rule above), `NSLocalNetworkUsageDescription: <N> connects to ...` (the
+# forker's own user-visible text), and a comment the comment rule had already
+# reworded as far as a comment rule goes. Prose is REPORTED by
+# report_prose_token_lines and never rewritten: the forker's words are theirs.
+def token_identifier(token)
+  /(?<![A-Za-z0-9_])#{Regexp.escape(token)}(?![A-Za-z0-9_])/
+end
+
+def comment_line?(line)
+  line.match?(%r{\A\s*(?:#|//)})
+end
+
+# In the Tuist manifest the token can only be prose INSIDE a string literal
+# whose content has whitespace; a token outside every literal is an identifier
+# and structural by definition. In the XcodeGen manifest the value after `key:`
+# is prose when it has whitespace once a trailing comment is dropped.
+def prose_line?(line, token, kind)
+  pattern = token_identifier(token)
+  if kind == :swift
+    outside  = line.gsub(/"(?:[^"\\]|\\.)*"/, '""')
+    return false if outside.match?(pattern)
+
+    literals = line.scan(/"((?:[^"\\]|\\.)*)"/).flatten.select { |text| text.match?(pattern) }
+    return !literals.empty? && literals.all? { |text| text.strip.match?(/\s/) }
+  end
+
+  value = line.sub(/\A\s*(?:-\s+)?[A-Za-z_][A-Za-z0-9_.-]*:\s*/, "").sub(/\s+#.*\z/, "").strip
+  value.match?(/\s/)
+end
+
+def token_bearing_lines(body, token)
+  pattern = token_identifier(token)
   body.lines.each_with_index.filter_map do |line, index|
-    "#{index + 1}: #{line.strip}" if line.include?(token)
+    next if comment_line?(line) || line.match?(/\A\s*"?PRODUCT_MODULE_NAME"?:/) || !line.match?(pattern)
+
+    [index + 1, line.strip]
   end
 end
 
+def manifest_kind(relative)
+  relative == REL_PROJECT_SWIFT ? :swift : :yaml
+end
+
+def residual_token_lines(body, token, kind = :yaml)
+  token_bearing_lines(body, token).reject { |_, line| prose_line?(line, token, kind) }
+                                   .map { |number, line| "#{number}: #{line}" }
+end
+
+def prose_token_lines(body, token, kind)
+  token_bearing_lines(body, token).select { |_, line| prose_line?(line, token, kind) }
+                                   .map { |number, line| "#{number}: #{line}" }
+end
+
+def report_prose_token_lines(relative, body, token)
+  prose = prose_token_lines(body, token, manifest_kind(relative))
+  return if prose.empty?
+
+  say "left #{prose.length} line(s) of #{relative} that name #{token.inspect} inside " \
+      "user-visible text unchanged — the forker's own words are not structure: #{prose.join(' | ')}"
+end
+
 def require_no_residual_token(relative, body, token)
-  residual = residual_token_lines(body, token)
+  residual = residual_token_lines(body, token, manifest_kind(relative))
   return if residual.empty?
 
   fail_with 4, "#{relative} still names the fork's structural token #{token.inspect} on " \
@@ -1959,6 +2108,23 @@ def rewrite_project_yml(root, token, bundle_id)
   path     = File.join(root, relative)
   body     = read_utf8(path)
   counts   = {}
+
+  # A PRODUCT_NAME above `targets:` is project level: it leaks into all four
+  # test bundles and collides the two iOS .xctest bundles at one path, which is
+  # why yml-bundle-id only ever emits it beside a per-target app bundle id. A
+  # fork that pinned it there (#293 pins per target; this is the other place a
+  # hand could put it) is refused by name rather than rewired in place.
+  targets_at    = body.lines.index { |line| line.chomp == "targets:" }
+  project_level = body.lines.each_with_index.filter_map do |line, index|
+    "#{index + 1}: #{line.strip}" if (targets_at.nil? || index < targets_at) && line.match?(/\A\s*PRODUCT_NAME:/)
+  end
+  unless project_level.empty?
+    fail_with 4, "#{relative} sets PRODUCT_NAME above `targets:`, at project level, on " \
+                 "#{project_level.join(' | ')}. A project-level PRODUCT_NAME leaks into all four " \
+                 "test bundles and collides the two iOS .xctest bundles at one path, so this " \
+                 "command only rewires it per app target. Move it under each app target's " \
+                 "settings and re-run. Nothing was written to #{relative}."
+  end
 
   insert_product_name = !body.match?(/^\s*PRODUCT_NAME:/)
   body = apply_line_rules(body, project_yml_rules(token, bundle_id, insert_product_name), counts)
@@ -1992,6 +2158,7 @@ def rewrite_project_yml(root, token, bundle_id)
                       "yml-test-host"       => unit_tests,
                       "yml-bundle-loader"   => unit_tests)
   require_no_residual_token(relative, body, token)
+  report_prose_token_lines(relative, body, token)
 
   File.binwrite(path, body)
   counts
@@ -2027,6 +2194,7 @@ def rewrite_project_swift(root, token, bundle_id)
                       "swift-xcconfig-rows"      => 2,
                       "swift-bundle-ref"         => 2)
   require_no_residual_token(relative, body, token)
+  report_prose_token_lines(relative, body, token)
 
   File.binwrite(path, body)
   counts
