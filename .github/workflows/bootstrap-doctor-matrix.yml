@@ -99,6 +99,7 @@ on:
       - 'test/env_precedence_test.rb'
       - 'bin/refork-smoketest.sh'
       - 'ci/test-refork-inputs.sh'
+      - 'ci/test-dry-run.sh'
 
 permissions:
   contents: read
@@ -572,6 +573,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run refork input-contract tests
         run: bash ci/test-refork-inputs.sh
+
+  # `bin/ship.rb --dry-run` translated into ONE lane option, skip_upload:true,
+  # while the lane defaulted skip_tag independently — so a dry run ran step 6/6
+  # for real and pushed a tag to origin, then printed a bold green banner
+  # claiming an upload that never happened (#301). A pushed tag is the one side
+  # effect of that lane which outlives the run.
+  #
+  # Hermetic: it drives the REAL bin/ship.rb inside a throwaway tree with a fake
+  # `bundle` that records argv, so the flags and the banner are observable with
+  # no build, no signature, no upload and no Apple credentials. The lane half —
+  # which cannot be run without a real build — is measured by evaluating its two
+  # assignment lines straight out of fastlane/Fastfile against every option
+  # shape a caller in this repository uses, including the canary's
+  # skip_tag-alone shape that must keep uploading.
+  dry-run-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run --dry-run contract tests
+        run: bash ci/test-dry-run.sh
 
   # Regression test for #108's BLOCKER 1: `make doctor` crashed with a
   # Bundler::GemNotFound stack trace on a fresh fork because no path in

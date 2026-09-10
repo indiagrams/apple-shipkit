@@ -1794,7 +1794,18 @@ platform :ios do
   lane :release do |options|
     tag         = options[:tag] or UI.user_error!("tag: option is required (e.g. tag:v0.1.0)")
     skip_upload    = options[:skip_upload]    || false
-    skip_tag       = options[:skip_tag]       || false
+    # NEVER a tag without an upload (#301). A pushed tag is the one side effect
+    # of this lane that outlives the run: deleting it is not free once anyone has
+    # fetched it, and on a repo where tags drive releases it starts downstream
+    # automation for a build that was never uploaded. The two flags used to
+    # default independently, so `skip_upload:true` alone — which is exactly what
+    # `bin/ship.rb --dry-run` passed — ran step 6/6 for real.
+    #
+    # The coupling is one-way on purpose. `skip_tag:true` ALONE still uploads
+    # without tagging: that is the canary's shape
+    # (canary-local-mode.yml:497-499 ships for real and deliberately keeps its
+    # ephemeral tags out of the fork's history), and it stays untouched.
+    skip_tag       = options[:skip_tag]       || skip_upload
     skip_changelog = options[:skip_changelog] || false
     changelog_arg  = options[:changelog]
 
@@ -2021,7 +2032,13 @@ platform :ios do
       sh("cd #{repo_root} && git tag #{tag} && git push origin #{tag}")
     end
 
-    UI.success("#{tag} is live on TestFlight (#{active_platforms.join(' + ')}).")
+    # `dry_run` here, not `skip_upload`: either skip makes the claim below false
+    # in a different way, and the lane already computed the union at 1803.
+    if dry_run
+      UI.success("#{tag} — dry run finished. Nothing was uploaded#{skip_tag ? ' and no tag was pushed' : ''}.")
+    else
+      UI.success("#{tag} is live on TestFlight (#{active_platforms.join(' + ')}).")
+    end
   end
 
   desc "Capture App Store screenshots (iOS + macOS via ci/take-screenshots.sh)"
