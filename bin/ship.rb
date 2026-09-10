@@ -23,6 +23,13 @@
 #
 # Usage:  bundle exec ruby bin/ship.rb [--dry-run] [--force]
 #
+#   --dry-run  build, sign and export, then stop. NO TestFlight upload and NO
+#              git tag — it passes both `skip_upload:true` and `skip_tag:true`,
+#              and the lane couples them anyway (#301: passing only the first
+#              left step 6/6 pushing a real tag to origin, which is the one
+#              side effect of a release that outlives the run). Nothing leaves
+#              the working tree.
+#
 # Exit:
 #   0 release succeeded (or was already shipped, or in-progress run completed)
 #   1 invocation / I/O error
@@ -98,7 +105,11 @@ if config.local_mode?
   puts Bootstrap::UI.bold("Running fastlane release locally — tag #{tag}")
   env = Bootstrap.asc_env(config).merge("PLATFORMS" => config.platforms.join(","))
   args = ["bundle", "exec", "fastlane", "release", "tag:#{tag}"]
-  args << "skip_upload:true" if dry_run == "true"
+  # BOTH flags, not just skip_upload (#301). The lane now couples them itself, so
+  # this is belt-and-braces — but it is also the line that says what a dry run
+  # means, and a caller that spells only half of it reads as though a tag push
+  # were intended.
+  args += ["skip_upload:true", "skip_tag:true"] if dry_run == "true"
 
   # Sh.stream, not Sh.run: this is the longest-running command in the whole
   # tool and its output is the only record of what happened. Sh.run would
@@ -109,9 +120,14 @@ if config.local_mode?
   _out, ok = Bootstrap::Sh.stream(*args, env: env)
   if ok
     puts
-    puts Bootstrap::UI.bold("✅ Local release succeeded.")
-    puts "Tag #{tag} pushed; binaries uploaded to App Store Connect."
-    puts "Run #{Bootstrap::UI.bold 'make verify'} to confirm TestFlight ingestion (~5-15 min)."
+    if dry_run == "true"
+      puts Bootstrap::UI.bold("✅ Dry run succeeded — archived and exported, nothing shipped.")
+      puts "No upload, no tag. Re-run without --dry-run to release #{tag}."
+    else
+      puts Bootstrap::UI.bold("✅ Local release succeeded.")
+      puts "Tag #{tag} pushed; binaries uploaded to App Store Connect."
+      puts "Run #{Bootstrap::UI.bold 'make verify'} to confirm TestFlight ingestion (~5-15 min)."
+    end
     exit 0
   else
     # No `puts out` here — it has already been printed, in order and with
@@ -209,9 +225,15 @@ loop do
   if status == "completed"
     if conclusion == "success"
       puts
-      puts Bootstrap::UI.bold("✅ Release succeeded.")
-      puts "Tag pushed; both binaries uploaded to App Store Connect."
-      puts "Run #{Bootstrap::UI.bold 'make verify'} to confirm TestFlight ingestion (~5-15 min ASC processing time)."
+      if dry_run == "true"
+        puts Bootstrap::UI.bold("✅ Dry run succeeded — archived and exported, nothing shipped.")
+        puts "No upload, no tag (release.yml passes skip_upload:true skip_tag:true on a dry run)."
+        puts "Re-run without --dry-run to release."
+      else
+        puts Bootstrap::UI.bold("✅ Release succeeded.")
+        puts "Tag pushed; both binaries uploaded to App Store Connect."
+        puts "Run #{Bootstrap::UI.bold 'make verify'} to confirm TestFlight ingestion (~5-15 min ASC processing time)."
+      end
       exit 0
     else
       puts
