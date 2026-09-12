@@ -15,9 +15,16 @@
 #   SIMULATOR_NAME      simulator to fall back to (default: iPhone 16)
 set -euo pipefail
 
-# Default simulator: the newest iPhone this machine actually has. A hardcoded
-# name rots — "iPhone 16" is not installed on every Mac, and the failure is an
-# unhelpful xcodebuild destination error.
+# Default simulator: an iPhone this machine actually has. A hardcoded name rots
+# — "iPhone 16" is not installed on every Mac, and the failure is an unhelpful
+# xcodebuild destination error.
+#
+# Deliberately NOT described as "the newest". simctl enumerates per runtime in
+# its own order and this takes the last line of that enumeration: measured on a
+# Mac with iPhone 17, 17 Pro, 17 Pro Max and Air installed, it returns
+# "iPhone 16e". Any available iPhone is a valid destination, so the arbitrary
+# pick is fine — claiming it is the newest was not. Set SIMULATOR_NAME when you
+# care which one.
 SIM_NAME="${SIMULATOR_NAME:-}"
 if [[ -z "$SIM_NAME" ]]; then
   SIM_NAME=$(xcrun simctl list devices available 2>/dev/null \
@@ -30,10 +37,20 @@ WANT_UDID=0
 
 udid=""
 if [[ "${FORCE_SIMULATOR:-}" != "1" ]]; then
-  # xctrace lists physical devices before simulators; exclude anything that
-  # names itself a simulator, and take the first iPhone.
+  # ONLY the "== Devices ==" section. `xctrace list devices` also prints
+  # "== Devices Offline ==" — every iPhone this Mac has ever paired with — and
+  # a plain grep picks one of those up when nothing is plugged in, emitting
+  # `id=<UDID>` for a phone that is not there. That silently defeats the
+  # simulator fallback this script exists to provide, and hands xcodebuild the
+  # destination error the header promises to avoid. Reproduced on a Mac with
+  # two offline phones remembered.
+  #
+  # Case-insensitive: a phone named "jp's iphone" is an iPhone. The old
+  # `grep -E "iPhone"` skipped exactly those while `grep -iv simulator` was
+  # already case-insensitive, so lowercase-named phones never got preferred.
   udid=$(xcrun xctrace list devices 2>/dev/null \
-           | grep -E "iPhone.*\(" | grep -iv "simulator" \
+           | awk '/^== Devices ==/{inside=1; next} /^== /{inside=0} inside' \
+           | grep -iE "iphone.*\(" | grep -iv "simulator" \
            | head -1 | sed 's/.*(\(.*\))/\1/') || true
 fi
 

@@ -118,6 +118,23 @@ jobs:
         run: command -v shellcheck >/dev/null || sudo apt-get install -y shellcheck
       - name: bash -n + shellcheck
         run: ./ci/check-shell.sh
+      # Python is not new here — ci/check-app-icon.sh, ci/extract-mac-screenshots.sh,
+      # bin/take-readme-screenshots.sh and ci/lib/resolve-dist-cert-sha.sh all shell
+      # out to it — but bin/device-rig/drive.py is the first STANDALONE .py, and
+      # nothing in CI parsed Python at all. ci/check-shell.sh is shell by charter
+      # (its own header says so), so the cheapest honest coverage is a compile pass
+      # in the same job: a .py that does not parse is the same class of defect as a
+      # .sh that does not, and it was reaching main unchecked.
+      - name: python3 -m py_compile (tracked .py)
+        run: |
+          set -euo pipefail
+          mapfile -t pyfiles < <(git ls-files '*.py')
+          if [ ${#pyfiles[@]} -eq 0 ]; then
+            echo "  no tracked .py files"; exit 0
+          fi
+          printf '  %s\n' "${pyfiles[@]}"
+          python3 -m py_compile "${pyfiles[@]}"
+          echo "  OK ${#pyfiles[@]} file(s) parse"
 
   swiftlint:
     name: swiftlint

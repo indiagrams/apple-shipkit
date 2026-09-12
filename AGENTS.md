@@ -30,7 +30,7 @@ The fork ↔ upstream sync property is the most important architectural invarian
 | macOS-only resources | `app/macOS/` | Same shape, macOS variant |
 | Unit tests | `app/Tests/` (iOS), `app/MacOSTests/` (macOS) | XCTest |
 | UI tests / screenshot tests | `app/UITests/`, `app/MacOSUITests/` | UI tests can't `@testable import` the app binary |
-| Real-device UI automation (opt-in) | `bin/device-rig/` | Appium + WebDriverAgent, for what XCUITest cannot reach from inside your target: permission alerts, the share sheet, Messages, two phones. Template-owned; **not** wired into `make check`/`make verify`. Read `docs/UI-AUTOMATION.md` before using it — a dev-signed WDA expires every 7 days and presents as a capability failure |
+| Real-device UI automation (opt-in) | `bin/device-rig/` | Appium + WebDriverAgent, for what XCUITest cannot reach from inside your target: the share sheet, Settings, Messages, two phones. Template-owned; **not** wired into `make check`/`make verify`. Read `docs/UI-AUTOMATION.md` before using it — a dev-signed WDA expires every 7 days and presents as a capability failure |
 | Accessibility identifiers | `app/Shared/AccessibilityIdentifiers.swift` | Compiled into BOTH app and UI test targets via project manifest `sources:` |
 | App icon (1024 PNG) | `app/iOS/Assets.xcassets/AppIcon.appiconset/icon_1024.png` | Run `make icons` to regenerate macOS .icns from the same source |
 | App Store metadata | `fastlane/metadata/en-US/*.txt` | Localizable; en-US ships by default |

@@ -8,10 +8,10 @@ Two layers, and most projects need only the first.
 | Runs on | simulator, device, macOS | physical iPhone only |
 | Needs | Xcode (already required) | node, Appium, a signed WDA, a root tunnel |
 | Wired into `make check` / `make verify` | yes | **no — opt-in, always** |
-| Reach | your views and their accessibility tree | SpringBoard, Settings, Messages, Photos, system permission alerts, several phones at once |
+| Reach | your views and their accessibility tree | SpringBoard, Settings, Messages, Photos, several phones at once (permission alerts live in SpringBoard's tree too, but driving them is **not verified** — see the table below) |
 
 Start at Layer 1. Reach for Layer 2 only when the thing under test is genuinely
-outside your app: a permission alert, the share sheet, a universal link tapped
+outside your app: the share sheet, Settings, a universal link tapped
 for real in Messages, or two devices talking to each other.
 
 Both layers read the **same accessibility tree**, so both reward putting stable
