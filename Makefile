@@ -66,12 +66,13 @@ endif
 # baking a specific filesystem layout into the template was confusing forkers
 # and silently leaking per-fork keys (BUNDLE_ID etc.) across fork boundaries.
 
-.PHONY: all go bootstrap check check-ios check-macos check-sim build generate icons screenshots release-dryrun setup-github phase-checklist milestone-checklist help init doctor bootstrap-fork ship verify submit mint-local-certs clean-revoked-certs revoke-orphan-certs format format-check _check-bundle
+.PHONY: all go bootstrap check check-ios check-macos check-sim build generate icons screenshots release-dryrun setup-github phase-checklist milestone-checklist help init doctor bootstrap-fork ship verify submit mint-local-certs clean-revoked-certs revoke-orphan-certs format format-check uitest-screenshots _check-bundle
 
 help:
 	@echo "Targets:"
 	@echo "  bootstrap        One-time dev-env setup after clone (brew bundle, lefthook install, xcodegen, bundle install). Distinct from bootstrap-fork."
 	@echo "  check            Same as: ci/local-check.sh --fast (iOS device build)"
+	@echo "  uitest-screenshots  XCRESULT=<path> — pull screenshots for FAILED UI tests out of an .xcresult"
 	@echo "  check-ios        iOS device build (primary signal)"
 	@echo "  check-sim        iOS Simulator build (backup signal)"
 	@echo "  check-macos      macOS build"
@@ -125,6 +126,10 @@ format-check:
 
 check:
 	ci/local-check.sh --fast
+
+# XCRESULT=/path/to/Result.xcresult make uitest-screenshots
+uitest-screenshots:
+	bin/dump-failure-screenshots.sh "$(XCRESULT)" $(if $(OUT),"$(OUT)",)
 
 check-ios:
 	ci/local-check.sh --fast
