@@ -20,7 +20,14 @@
 #                      Facebook's shipped id, which your team cannot sign.
 #
 # ⚠ ONE DERIVED-DATA DIR PER PHONE. Two builds sharing a root collide on the
-#   SQLite build lock. That is why the directory is an argument.
+#   SQLite build lock. That is why the directory is an argument — and why the
+#   default is keyed by UDID, so running this in a loop over every connected
+#   phone is already correct.
+#
+# Scales to as many phones as you like: one tunnel and one Appium server serve
+# them all. Per phone you vary udid, derivedDataPath, wdaLocalPort (allocate
+# 8100+n yourself) and mjpegServerPort if streaming — nothing else. The WDA
+# bundle id may be identical on every phone. See docs/UI-AUTOMATION.md.
 set -euo pipefail
 
 UDID="${1:?usage: install-wda.sh <UDID> [DERIVED_DATA_DIR]}"

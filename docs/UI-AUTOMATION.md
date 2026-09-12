@@ -8,7 +8,7 @@ Two layers, and most projects need only the first.
 | Runs on | simulator, device, macOS | physical iPhone only |
 | Needs | Xcode (already required) | node, Appium, a signed WDA, a root tunnel |
 | Wired into `make check` / `make verify` | yes | **no — opt-in, always** |
-| Reach | your views and their accessibility tree | SpringBoard, Settings, Messages, Photos, system permission alerts, two phones at once |
+| Reach | your views and their accessibility tree | SpringBoard, Settings, Messages, Photos, system permission alerts, several phones at once |
 
 Start at Layer 1. Reach for Layer 2 only when the thing under test is genuinely
 outside your app: a permission alert, the share sheet, a universal link tapped
@@ -89,7 +89,7 @@ before believing it" and re-measure on a new major version.
 | Tap, swipe, type, hardware buttons | ✅ |
 | Read any app's accessibility tree, with real frames | ✅ |
 | Screenshots, device syslog | ✅ |
-| Two phones concurrently, one Appium server | ✅ |
+| Several phones concurrently, one Appium server | ✅ (measured with two) |
 | **Tap a link in Messages — the real universal-link path** | ✅ |
 | System permission alerts | not verified; they are SpringBoard's and appear in its tree |
 | Lock the device | ✅ |
@@ -119,6 +119,42 @@ appium server -p 4723
 ```
 
 `bin/device-rig/drive.py` holds the session primitives. Import it; don't run it.
+
+### Scaling to as many phones as you need
+
+Nothing here is two-phone shaped. One tunnel registry and one Appium server serve
+every phone; each phone gets one WDA install and one session.
+
+```sh
+# one install per phone — the derived-data default is /tmp/wda-<UDID>,
+# already unique per device, which is the rule below satisfying itself
+for udid in $(xcrun xctrace list devices | grep -E "iPhone.*\(" | grep -iv simulator \
+                | sed 's/.*(\(.*\))/\1/'); do
+  bin/device-rig/install-wda.sh "$udid"
+done
+
+# one tunnel for ALL of them — omit --udid
+sudo $(command -v node) \
+  $(find ~/.appium -type d -name appium-ios-remotexpc | head -1)/scripts/tunnel-creation.mjs \
+  --keep-open --reconnect-retries 0
+```
+
+**Exactly four capabilities differ per phone, and only one needs a convention
+you invent:** `udid`, `derivedDataPath` (the install script's default already
+makes it unique), `mjpegServerPort` if you stream, and **`wdaLocalPort`, which
+you must allocate yourself** — `8100 + n` is as good a rule as any: 8101, 8102,
+8103… That is the *host* side. The device side stays **8100 on every phone**, so
+set `wdaRemotePort: 8100` explicitly; Appium otherwise derives it from
+`wdaLocalPort` and probes a port WDA is not listening on.
+
+**The WDA bundle id may be identical on every phone.** Appium's teardown is
+UDID-scoped, so a session on one phone cannot kill another's runner.
+
+⚠ **The real ceiling is Apple's, not this tooling's.** A development
+provisioning profile registers each device against your membership, and the
+allowance is per device type per membership year — and the slots do not free up
+when you unregister. A large rig is a provisioning decision before it is a test
+decision.
 
 ### The four things that will cost you a day each
 
