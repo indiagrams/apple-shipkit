@@ -4,7 +4,7 @@
 # OPT-IN. Nothing in `make check` or `make verify` calls this. It exists for the
 # tests XCUITest cannot reach from inside your own app target: system permission
 # alerts, the share sheet, Messages, Settings, a universal link tapped for real,
-# or two phones talking to each other. See docs/UI-AUTOMATION.md.
+# or several phones talking to each other. See docs/UI-AUTOMATION.md.
 #
 # ⚠ A DEV-SIGNED WDA EXPIRES AFTER SEVEN DAYS. When sessions suddenly cannot
 #   launch WebDriverAgent, check the calendar before you touch a capability.

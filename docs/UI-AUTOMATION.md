@@ -12,7 +12,7 @@ Two layers, and most projects need only the first.
 
 Start at Layer 1. Reach for Layer 2 only when the thing under test is genuinely
 outside your app: the share sheet, Settings, a universal link tapped
-for real in Messages, or two devices talking to each other.
+for real in Messages, or several devices talking to each other.
 
 Both layers read the **same accessibility tree**, so both reward putting stable
 identifiers in `app/Shared/AccessibilityIdentifiers.swift` — it is compiled into
@@ -89,7 +89,7 @@ before believing it" and re-measure on a new major version.
 | Tap, swipe, type, hardware buttons | ✅ |
 | Read any app's accessibility tree, with real frames | ✅ |
 | Screenshots, device syslog | ✅ |
-| Several phones concurrently, one Appium server | ✅ (measured with two) |
+| Any number of phones concurrently, one Appium server | ✅ — nothing here is two-phone shaped: one tunnel registry and one Appium server serve every phone, and only four capabilities vary per device (see "Scaling" below). Observed with three attached and driven concurrently; the ceiling is Apple's device-provisioning allowance, not this tooling |
 | **Tap a link in Messages — the real universal-link path** | ✅ |
 | System permission alerts | not verified; they are SpringBoard's and appear in its tree |
 | Lock the device | ✅ |
