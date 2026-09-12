@@ -77,3 +77,8 @@ ehthumbs.db
 release-notes.md
 .bootstrap.env
 .claude/
+
+# Python bytecode. bin/device-rig/drive.py is a module forks import, and
+# pr.yml py_compiles every tracked .py, which writes these in-tree.
+__pycache__/
+*.pyc

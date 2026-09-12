@@ -30,6 +30,7 @@ The fork ↔ upstream sync property is the most important architectural invarian
 | macOS-only resources | `app/macOS/` | Same shape, macOS variant |
 | Unit tests | `app/Tests/` (iOS), `app/MacOSTests/` (macOS) | XCTest |
 | UI tests / screenshot tests | `app/UITests/`, `app/MacOSUITests/` | UI tests can't `@testable import` the app binary |
+| Real-device UI automation (opt-in) | `bin/device-rig/` | Appium + WebDriverAgent, for what XCUITest cannot reach from inside your target: the share sheet, Settings, Messages, two phones. Template-owned; **not** wired into `make check`/`make verify`. Read `docs/UI-AUTOMATION.md` before using it — a dev-signed WDA expires every 7 days and presents as a capability failure |
 | Accessibility identifiers | `app/Shared/AccessibilityIdentifiers.swift` | Compiled into BOTH app and UI test targets via project manifest `sources:` |
 | App icon (1024 PNG) | `app/iOS/Assets.xcassets/AppIcon.appiconset/icon_1024.png` | Run `make icons` to regenerate macOS .icns from the same source |
 | App Store metadata | `fastlane/metadata/en-US/*.txt` | Localizable; en-US ships by default |
@@ -46,6 +47,8 @@ The fork ↔ upstream sync property is the most important architectural invarian
 | One-time setup | `make bootstrap` | Installs brew deps, bundler, project-generator (xcodegen or tuist), git hook. Idempotent. |
 | Local build (no signing) | `make check` | Same signal CI runs on PR. Use this in your edit-build-test loop. |
 | Run unit + UI tests | `make verify` (after `make ship`), or invoke `xcodebuild test` directly during dev | Don't write custom test scripts — the project generators wire schemes correctly. |
+| See why a UI test failed | `XCRESULT=<path> make uitest-screenshots` | `xcresulttool export attachments --only-failures` returns nothing for a `tearDown` screenshot — it searches failure activities, not test scope. This exports per failed test id and keeps the PNGs. |
+| Run UI tests on a real iPhone | `-destination "$(bin/uitest-destination.sh)"` | Prefers a connected device, falls back to a simulator. `FORCE_SIMULATOR=1` pins the simulator. |
 | Ship to TestFlight | `make ship` | Builds + signs + uploads to TestFlight. ~5 min. Auto-versioning: `v<MARKETING>+<BUILD>`. |
 | Submit for App Review | `make submit` | Stages (default) or auto-submits the latest TestFlight build. Reads `SUBMIT_FOR_REVIEW` from `.bootstrap.env`. |
 | Take App Store screenshots | `make screenshots` | iOS + macOS captures into `fastlane/screenshots/en-US/`. Survives quarantined Xcode. |
