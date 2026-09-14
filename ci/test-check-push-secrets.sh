@@ -228,6 +228,158 @@ if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "no reason"; then ok "an acc
 else red "case 11 — a bare sha with no reason was honoured as an acceptance (rc=$RC)"; fi
 rm -rf "$d"
 
+# ── 10c/10d. A PATH hit is accepted by the SHA OF THE TREE carrying the entry,
+#        never by name: the name IS a configured value, so a `path:<name>` key
+#        would write the value into the tracked acceptance file. The same name
+#        in a DIFFERENT tree is a different publication and must still red.
+d=$(mkrepo)
+( cd "$d/work" || exit 1; mkdir keys && : > "keys/AuthKey_${V_KEYID}.p8" && "$GIT" add -A && "$GIT" commit -qm "a key-named entry in a subtree" ) >/dev/null 2>&1
+tsha=$( cd "$d/work" || exit 1; "$GIT" rev-parse HEAD:keys )
+mkdir -p "$d/work/ci"
+printf '%s   # selftest: the tree carrying the key-named entry, accepted on purpose\n' "$tsha" > "$d/work/ci/push-secrets-accepted.txt"
+run "$d"
+if need_valid "case 10c"; then
+  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qa "ACCEPTED: PATH NAME"; then ok "a PATH hit accepted by its TREE sha is suppressed and still printed with its reason"
+  else red "case 10c — accepting the carrying tree's sha did not green the gate (rc=$RC): $(printf '%s' "$OUT" | tail -2)"; fi
+fi
+# A one-entry subtree holding the same empty blob would be the SAME tree object,
+# so the second tree carries one more entry.
+( cd "$d/work" || exit 1; mkdir other && : > "other/AuthKey_${V_KEYID}.p8" && printf 'x\n' > other/README.md && "$GIT" add -A && "$GIT" commit -qm "the same name in a different tree" ) >/dev/null 2>&1
+run "$d"
+if need_valid "case 10d"; then
+  if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "HIT: a PATH NAME"; then ok "the same NAME in a DIFFERENT tree is not covered by that acceptance and still goes RED"
+  else red "case 10d — an acceptance keyed on one tree silenced the same name in another tree (rc=$RC)"; fi
+fi
+rm -rf "$d"
+
+# ── 11b. a tree-sha entry with no reason is a RED, like any other bare key.
+d=$(mkrepo)
+( cd "$d/work" || exit 1; mkdir keys && : > "keys/AuthKey_${V_KEYID}.p8" && "$GIT" add -A && "$GIT" commit -qm "a key-named entry" ) >/dev/null 2>&1
+tsha=$( cd "$d/work" || exit 1; "$GIT" rev-parse HEAD:keys )
+mkdir -p "$d/work/ci"
+printf '%s\n' "$tsha" > "$d/work/ci/push-secrets-accepted.txt"
+OUT=$( cd "$d/work" || exit 1; HOME="$d/home" bash ./check-push-secrets.sh 2>&1 ); RC=$?
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "no reason"; then ok "a tree-sha acceptance with no stated reason REDS"
+else red "case 11b — a bare tree sha with no reason was honoured as an acceptance (rc=$RC)"; fi
+rm -rf "$d"
+
+# ── 12. THE MEASURED NO-EDIT FALSE-GREEN. The remote already holds an empty
+#        .gitkeep; an unpushed commit adds an EMPTY file whose NAME carries the
+#        key id. `rev-list --objects` lists that blob once, under its FIRST path
+#        (.gitkeep, already published), so a gate reading the path column sees
+#        no key-named path at all and printed `ok (3 object(s): 0 blob, 1
+#        commit, 2 tree ...)`. The name is published content: it lives in the
+#        NEW tree's entries.
+d=$(mkrepo)
+( cd "$d/work" || exit 1
+  : > .gitkeep && "$GIT" add -A && "$GIT" commit -qm "an empty placeholder" && "$GIT" push -q origin HEAD:refs/heads/main
+  mkdir keys && : > "keys/AuthKey_${V_KEYID}.p8" && "$GIT" add -A && "$GIT" commit -qm "add an empty key-named file" ) >/dev/null 2>&1
+run "$d"
+if need_valid "case 12"; then
+  if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "HIT: a PATH NAME.*keys/"; then ok "an EMPTY key-named file whose bytes the remote already has goes RED (the measured no-edit false-green)"
+  else red "case 12 — the measured no-edit repro did NOT go red (rc=$RC): $(printf '%s' "$OUT" | tail -1)"; fi
+fi
+rm -rf "$d"
+
+# ── 13. THE PATH LEG OF THE CONTROL MUST BE ABLE TO FAIL. Blind the path leg's
+#        grep and the control must red BY NAME. With ORed legs and every path
+#        plant holding the same bytes as the message plant, the path leg never
+#        fired in the control at all and blinding it changed nothing.
+d=$(mkrepo)
+( cd "$d/work" || exit 1; printf 'nothing here\n' > fine.md && "$GIT" add -A && "$GIT" commit -qm "clean" ) >/dev/null 2>&1
+sed -i '' 's|grep -naF -f "\$TMP/pat.\$i" "\$TMP/paths.names"|true|' "$d/work/check-push-secrets.sh"
+if [ "$(grep -ac '^      done < <(true || true)$' "$d/work/check-push-secrets.sh")" -eq 1 ]; then
+  OUT=$( cd "$d/work" || exit 1; HOME="$d/home" bash ./check-push-secrets.sh 2>&1 ); RC=$?
+  if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "RED: control.*PATH NAME"; then
+    ok "blinding the path leg makes the CONTROL fail by name (every leg must fire: AND, not OR)"
+  else
+    red "case 13 — the path leg was blinded and the gate still reported (rc=$RC). The control's path leg cannot fail."
+  fi
+else
+  red "case 13 — the mutation did not apply (anchor count != 1), so this case proved nothing"
+fi
+rm -rf "$d"
+
+# ── 14. THE COMMIT-MESSAGE LEG, likewise. Under an ORed control the blob leg
+#        alone kept this green.
+d=$(mkrepo)
+( cd "$d/work" || exit 1; printf 'nothing here\n' > fine.md && "$GIT" add -A && "$GIT" commit -qm "clean" ) >/dev/null 2>&1
+sed -i '' "s|cat-file commit \"\$sha\" 2>/dev/null \| sed '1,/^\$/d'|cat-file commit \"\$sha\" 2>/dev/null \| sed '1,\$d'|" "$d/work/check-push-secrets.sh"
+if [ "$(grep -ac "cat-file commit \"\$sha\" 2>/dev/null | sed '1,\$d'" "$d/work/check-push-secrets.sh")" -eq 1 ]; then
+  OUT=$( cd "$d/work" || exit 1; HOME="$d/home" bash ./check-push-secrets.sh 2>&1 ); RC=$?
+  if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "RED: control.*commit message"; then
+    ok "blinding the commit-message leg makes the CONTROL fail by name"
+  else
+    red "case 14 — the commit-message leg was blinded and the gate still reported (rc=$RC)."
+  fi
+else
+  red "case 14 — the mutation did not apply (anchor count != 1), so this case proved nothing"
+fi
+rm -rf "$d"
+
+# ── 15. A STALE `path:` KEY. The key form was removed with the first-path
+#        column; a fork carrying the documented upstream form would otherwise go
+#        from ACCEPTED to FAILED with the stale key still parsing and nothing
+#        naming the cause. It is a RED that names the LINE, never the key: a
+#        path key's text is a configured value, and this file is tracked.
+d=$(mkrepo)
+( cd "$d/work" || exit 1; mkdir keys && : > "keys/AuthKey_${V_KEYID}.p8" && "$GIT" add -A && "$GIT" commit -qm "a key-named entry" ) >/dev/null 2>&1
+mkdir -p "$d/work/ci"
+printf '# a fork upgrading from the documented upstream form\npath:keys/AuthKey_%s.p8   # ruled acceptable under the old key form\n' "$V_KEYID" > "$d/work/ci/push-secrets-accepted.txt"
+OUT=$( cd "$d/work" || exit 1; HOME="$d/home" bash ./check-push-secrets.sh 2>&1 ); RC=$?
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qa "removed 'path:<name>' key form" && printf '%s' "$OUT" | grep -qa "line 2"; then
+  if printf '%s' "$OUT" | grep -qa "AuthKey_${V_KEYID}"; then
+    red "case 15 — the RED named the stale key, which IS a configured value; it must name the line only"
+  else
+    ok "a stale path: acceptance key REDS, naming the line and the way out, and never echoing the key"
+  fi
+else red "case 15 — a stale path: key did not red with the cause named (rc=$RC)"; fi
+rm -rf "$d"
+
+# ── 16. A needle containing '/' is planted as a NESTED path, so the path legs
+#        are PROVEN for it rather than exempted. (ASC_API_KEY_P8_PATH's basename
+#        is a needle; a fork whose value carries a slash used to skip both legs
+#        while the control line still claimed all four.)
+d=$(mkrepo)
+( cd "$d/work" || exit 1
+  printf 'APP_EMAIL=%s\nBETA_APP_FEEDBACK_EMAIL=%s\nASC_API_KEY_ID=%s\nAPP_REVIEW_DEMO_USER=%s\n' \
+    "$V_APP" "$V_BETA" "$V_KEYID" 'demo/user/selftest' > .bootstrap.env
+  printf 'clean\n' > fine.md && "$GIT" add -A && "$GIT" commit -qm "clean" ) >/dev/null 2>&1
+run "$d"
+if need_valid "case 16"; then
+  if printf '%s' "$OUT" | grep -qa "exempt from the path legs only"; then
+    red "case 16 — a '/'-bearing needle was exempted from the path legs instead of planted as a nested path"
+  else ok "a needle containing '/' is planted as a nested path: no leg is claimed that was not run"; fi
+fi
+rm -rf "$d"
+
+# ── 17. A needle a filesystem cannot hold as one path component (a base64 key
+#        blob is the real case) must not kill the control: the plant is guarded,
+#        the needle is exempt from the path legs ONLY, and the control says so.
+#        Unguarded, the redirect died inside the control with "File name too
+#        long" -- no verdict, rc 1, and the template's pre-push hook renders that
+#        as "this push would upload a configured value". The error text also
+#        carried the value, which this gate's header promises never happens.
+d=$(mkrepo)
+long=$(printf 'Z%.0s' $(seq 1 400))
+( cd "$d/work" || exit 1
+  printf 'APP_EMAIL=%s\nBETA_APP_FEEDBACK_EMAIL=%s\nASC_API_KEY_ID=%s\nASC_API_KEY_P8_BASE64=%s\n' \
+    "$V_APP" "$V_BETA" "$V_KEYID" "$long" > .bootstrap.env
+  printf 'clean\n' > fine.md && "$GIT" add -A && "$GIT" commit -qm "clean" ) >/dev/null 2>&1
+run "$d"
+if need_valid "case 17"; then
+  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qa "could not be planted as a path" && ! printf '%s' "$OUT" | grep -qa "File name too long"; then
+    ok "a needle too long to be a path component leaves the control GREEN, exempt from the path legs only, with no filesystem error text"
+  else red "case 17 — a long needle broke the control or leaked an error (rc=$RC): $(printf '%s' "$OUT" | grep -a 'too long' | cut -c1-90)"; fi
+fi
+( cd "$d/work" || exit 1; printf 'the value is %s here\n' "$V_APP" > leak.md && "$GIT" add -A && "$GIT" commit -qm "leak" ) >/dev/null 2>&1
+run "$d"
+if need_valid "case 17b"; then
+  if [ "$RC" -ne 0 ]; then ok "and the gate still catches a real leak with that needle set (the exemption narrows one leg, not the scan)"
+  else red "case 17b — with a long needle configured the gate went green over a leak (rc=$RC)"; fi
+fi
+rm -rf "$d"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   echo "==> test-check-push-secrets: ok ($PASS case(s), 0 red)"
