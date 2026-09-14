@@ -6,6 +6,39 @@ template ship their own `SECURITY.md` and own their own disclosure process;
 this file is for vulnerabilities in the template's scaffolding, not in any
 particular fork built on top of it.
 
+## Push-time secret scanning
+
+`ci/check-push-secrets.sh` runs on the pre-push hook (via `lefthook` →
+`ci/local-check.sh`) and answers a question a working-tree scan structurally
+cannot: **would this push upload a configured value?**
+
+The two are not the same, and the gap is the normal outcome of fixing a leak.
+Redact a value, commit the fix, and the tree is clean while the objects behind
+`HEAD` still carry it — `git push` sends objects, not the checkout. The same
+holds after `filter-repo --replace-text` without `--replace-message`, after a
+rebase that rewrites content but not messages, and for any ref a rewrite's
+range did not reach.
+
+So the gate scans the **publish set**: objects reachable from local refs but
+not from what the remote currently advertises. It reads blobs, commit **message
+bodies**, tag messages and **path names** — a key id lands in a commit subject
+or a filename at least as often as in file content, and a needle derived from a
+filename can appear nowhere else at all.
+
+Two limits are deliberate and stated rather than implied:
+
+- **Commit ident headers are not scanned.** Where a configured contact address
+  is also the git identity, those headers carry it in every commit ever made,
+  including every commit already pushed. Scanning them would make the gate
+  permanently red over something git writes by construction, and a gate that
+  cannot go green gets ignored.
+- **Accepted exceptions live in `ci/push-secrets-accepted.txt`**, are printed
+  with their reason on every run, and require a reason to be honoured.
+
+`ci/test-check-push-secrets.sh` drives the real script against synthetic
+repositories and is mutation-proven: restoring a blob-only scan turns the
+commit-message and path-name cases red by name.
+
 ## Reporting a Vulnerability
 
 Email: **maintainers@indiagram.com**

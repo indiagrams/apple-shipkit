@@ -115,6 +115,24 @@ ci/check-identity.sh || fail "app/Identity.xcconfig incomplete — see ci/check-
 # release runs it. Needs shellcheck, which is in the Brewfile.
 ci/check-shell.sh || fail "a tracked shell script is broken — see ci/check-shell.sh"
 
+# Same question a push actually poses, asked at the last moment before it is
+# answered: would this push upload a configured value? A tree-scanning secret
+# check cannot answer that -- redact a value, commit the fix, and the tree is
+# clean while the objects behind HEAD still carry it. `git push` sends objects.
+#
+# Cheap (seconds), and pre-push is exactly where it belongs. Exit 3 means the
+# fork has no .bootstrap.env to take needles from -- true of the template
+# itself -- and is reported rather than silently treated as a pass.
+set +e
+ci/check-push-secrets.sh
+_pushsec=$?
+set -e
+case "$_pushsec" in
+  0) ;;
+  3) echo "    (no .bootstrap.env -- nothing to scan for. Not a pass, just nothing to check.)" ;;
+  *) fail "this push would upload a configured value -- see ci/check-push-secrets.sh" ;;
+esac
+
 case "$mode" in
   --fast)
     ensure_xcodeproj
