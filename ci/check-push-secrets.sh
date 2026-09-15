@@ -450,10 +450,34 @@ for i in "${!PATTERNS[@]}"; do
   fi
 done
 
+# The PEM leg had no control at all: blinding its counter changed nothing,
+# because nothing planted key material and the branch never ran. A verdict leg
+# the control never exercises is a leg that cannot fail. SYNTHETIC filler
+# base64, not a key, in the 0700 throwaway repo.
+( umask 077; {
+    printf -- '-----BEGIN PRIVATE KEY-----\n'
+    printf 'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB\n'
+    printf 'Q09OVFJPTC1QTEFOVC1OT1QtQS1SRUFMLUtFWS1TWU5USEVUSUMtRklMTEVSQUFB\n'
+    printf -- '-----END PRIVATE KEY-----\n'
+  } > "$CTL/planted-key.pem" )
+git -C "$CTL" add planted-key.pem >/dev/null 2>&1
+git -C "$CTL" commit -q --allow-empty -m "control PEM material" >/dev/null 2>&1
+
 ctl_fail=0
+SCAN_HITS=0
 scan_range "$CTL" --all > "$TMP/ctl.out" 2>&1 || true
+# ⚠ THE COUNTER THE VERDICT READS, CAPTURED HERE. The legs below assert on the
+# text the scan PRINTED; the verdict at the end of this file branches on
+# $SCAN_HITS. They are written by different statements, so a control that reads
+# only the printed text passes while the counter is blind -- measured: with an
+# increment replaced by `:`, the HIT line still printed, every leg still fired,
+# `control ok` still printed, and the gate exited 0 over a planted leak. A
+# redirect does not fork, so scan_range ran in THIS shell and the counter is
+# readable now.
+CTL_SCAN_HITS=$SCAN_HITS
 ctl_has() { grep -a "$1" "$TMP/ctl.out" | grep -qaF -- "-- $2"; }
 ctl_exempt() { [ -z "${CTL_PATH_PLANTED[$1]+x}" ]; }
+ctl_need_total=0
 for i in "${!PATTERNS[@]}"; do
   need=2; caught=0; missed=""
   if ctl_has "HIT: blob "   "${LABELS[$i]}"; then caught=$((caught + 1)); else missed="$missed blob;"; fi
@@ -469,7 +493,27 @@ for i in "${!PATTERNS[@]}"; do
     echo "RED: control -- needle '${LABELS[$i]}' was caught in $caught of $need leg(s); missed:${missed} -- every leg must fire (AND), not any one (OR)" >&2
     ctl_fail=1
   fi
+  ctl_need_total=$((ctl_need_total + need))
 done
+if ! grep -qa "PRIVATE KEY MATERIAL" "$TMP/ctl.out"; then
+  echo "RED: control -- the planted PRIVATE KEY block was not reported. That leg of the verdict is not exercised by this control, so nothing would catch it going blind" >&2
+  ctl_fail=1
+fi
+ctl_need_total=$((ctl_need_total + 1))
+# The legs above say WHICH leg was missed, which is worth keeping. These two say
+# the thing the VERDICT reads actually moved. The floor alone is not enough --
+# the scan finds far more hits than the control plants, so blinding ONE of the
+# increment sites still clears it; equality with the printed HIT lines is the
+# invariant that cannot be cleared.
+ctl_printed=$(grep -ac "HIT: " "$TMP/ctl.out" || true)
+if [ "$CTL_SCAN_HITS" -lt "$ctl_need_total" ]; then
+  echo "RED: control -- the scan PRINTED its hits but the verdict's own counter saw $CTL_SCAN_HITS of at least $ctl_need_total planted hit(s). The gate branches on that counter" >&2
+  ctl_fail=1
+fi
+if [ "$CTL_SCAN_HITS" -ne "$ctl_printed" ]; then
+  echo "RED: control -- the scan printed $ctl_printed HIT line(s) and the verdict's own counter saw $CTL_SCAN_HITS. Every printed hit must increment the counter the verdict branches on; a difference means one of them is blind" >&2
+  ctl_fail=1
+fi
 grep -qa "blob\|commit\|PATH NAME" "$TMP/ctl.out" || {
   echo "RED: control -- the scan produced no hits at all on a repo built to trip it" >&2; ctl_fail=1; }
 ! grep -qa "HIT: .*clean\.txt" "$TMP/ctl.out" || { echo "RED: control -- the clean object was reported as a hit" >&2; ctl_fail=1; }
