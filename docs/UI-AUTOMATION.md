@@ -74,6 +74,61 @@ override func tearDown() {
 - **Clean up in an `EXIT` trap, not at the end of the happy path.** A test run
   that dies half way still owes you a teardown.
 
+### Reading text out of an element: `UITestSupport/`
+
+**The two platforms publish a SwiftUI view's text in different accessibility
+attributes, and XCUITest's `.label` reads only some of them.** A cross-platform
+suite can therefore be green on iOS for a year while its macOS twin has never
+once looked at its subject.
+
+macOS publishes a plain `Text`'s content in `AXValue` **alone**. `.label` is
+built from `AXDescription` falling back to `AXTitle`, and never reads `AXValue`.
+So on macOS `element.label` is a constant empty string for the three commonest
+text shapes a SwiftUI author writes — the same answer for an element rendering
+the right string, the wrong string, or nothing at all. On iOS the same `Text`
+publishes its content *as* its label, which is why the iOS half stays green and
+tells you nothing is wrong.
+
+A **menu item** is a third shape again: `elementType 54`, publishing
+`label="" value="" title=<the item's text>`. A two-attribute rule derived from
+in-window shapes is structurally blind on it, and silently — it returns empty
+rather than refusing.
+
+`app/UITestSupport/` is the answer, compiled into both UI-test targets:
+
+- **`ElementText.swift`** — read `label` first, then the string `value`, then
+  `title`. **The order is load-bearing.** Asking `label` first keeps iOS
+  byte-identical and keeps every element that already answers on the branch it
+  already takes. It is deliberately *not* a widening to "first non-empty
+  attribute", which would make the answer depend on whichever attribute happened
+  to be populated.
+- **`BlindReadGuards.swift`** — assert **readability before relation**, so a
+  blind read reports itself instead of reporting something confident and wrong.
+
+**Two shipped failure modes justify the guards better than any argument.**
+`XCTAssertEqual(Set(ordinals).count, positions)` reported *"two cards render the
+same ordinal"* when the truth was three empty reads — `Set(["","",""]).count` is
+1, so the assertion produced the opposite finding wearing the right finding's
+words. And `XCTAssertEqual(chained.label, base64(source.label))` compared `""`
+with `""` and passed for two phases, because `base64("")` is `""`: a gate
+asserting nothing, and saying so to nobody.
+
+**Element *matching* is a separate mechanism and is not blind.** Only reading
+text *out of* an element is. On one run, an assertion counting
+`matching(identifier:)` hits on three elements passed while the `.label` read of
+those same three returned `["", "", ""]`. A rule of thumb that said "you cannot
+find SwiftUI `Text` by label on macOS" would send you rewriting queries that
+work.
+
+One trap with the opposite cause: a `NavigationLink`'s label reads fine and its
+role is `AXUnknown`, so `staticTexts[…]` cannot reach it **by type**. That is
+not a blind read and this layer does nothing for it.
+
+⚠ Measured on macOS 26.5.2 (build 25F84) with an out-of-process accessibility
+client over six SwiftUI shapes and two negative controls, and the menu-item
+shape independently twice. Apple moves these surfaces — re-measure before
+believing it.
+
 ---
 
 ## Layer 2 — the device rig (opt-in)

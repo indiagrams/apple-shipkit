@@ -164,6 +164,10 @@ targets:
     platform: iOS
     sources:
       - path: UITests
+      # App-agnostic UI-test support layer. Compiled into both UI-test
+      # targets because the blind-read problem it solves is macOS's and the
+      # read rule must stay identical on the platform that was already green.
+      - path: UITestSupport
       # Shared with the main app target so the same enum constants drive
       # both the views (.accessibilityIdentifier(...)) and the UI tests
       # (app.otherElements[...]). UI tests run in a separate process and
@@ -215,6 +219,9 @@ targets:
     platform: macOS
     sources:
       - path: MacOSUITests
+      # See AppUITests above — the same support layer, and this is the
+      # platform whose blind read made it necessary.
+      - path: UITestSupport
       # See AppUITests above — same rationale for the shared
       # selector enum. The macOS UI test doesn't query it today, but
       # making the symbol available so future macOS test screens can.
