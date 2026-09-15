@@ -99,9 +99,14 @@ check_icon() {
 
 # Largest distance between dominant colour clusters, as an integer.
 icon_spread() {
-  local bmp
-  bmp=$(mktemp -t iconprobe).bmp
-  sips -s format bmp --resampleHeightWidth 64 64 "$1" --out "$bmp" >/dev/null 2>&1 || { rm -f "$bmp"; return 1; }
+  local dir bmp
+  # A directory, not a file: `mktemp -t iconprobe` names a file and appending
+  # .bmp to it names a DIFFERENT path, so the file mktemp created is never the
+  # one removed below and leaks on every call. The -t form with no X's is also
+  # BSD-only; GNU mktemp rejects it outright.
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/iconprobe.XXXXXX") || return 1
+  bmp="$dir/probe.bmp"
+  sips -s format bmp --resampleHeightWidth 64 64 "$1" --out "$bmp" >/dev/null 2>&1 || { rm -rf "$dir"; return 1; }
   python3 - "$bmp" <<'PY'
 import struct, sys, itertools, math
 d = open(sys.argv[1], "rb").read()
@@ -126,7 +131,7 @@ if len(big) < 2:
 else:
     print(int(max(math.dist(a, b) for a, b in itertools.combinations(big, 2))))
 PY
-  rm -f "$bmp"
+  rm -rf "$dir"
 }
 
 echo "==> App icon check"
