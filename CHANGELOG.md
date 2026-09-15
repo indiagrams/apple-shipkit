@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bin/setup-github.sh` deleted every required status check it did not author, on every run, and reported `ok`.** It recomputed the check array from its own list and `PUT` the whole `/protection` object. A PUT replaces the object, so any context a fork added (by hand, in the UI, or from a later template version) was silently removed. What gets removed is a gate, so the symptom arrives weeks later as a PR that merges when it should have been blocked. The PUT also rebuilds `enforce_admins`, linear history and review settings from whatever the caller supplies.
+
+  When protection already exists, the script now works in five steps. It reads `…/required_status_checks/contexts` and appends only the missing ones through the additive `POST …/contexts` endpoint, which cannot remove a context and does not rebuild the `checks` objects, so existing `app_id` bindings are untouched. It re-reads the array and asserts it equals the intended union, printing `before`, `after` and `want`, and exiting 1 on any disagreement. `enforce_admins`, linear history, reviews and `strict` are not touched on this path. The full PUT survives only when `GET …/protection` returns 404, and a 403 (a free private repo) is detected on that read, before any write.
+
+  New knobs:
+  - `SETUP_GITHUB_EXTRA_CHECKS` names fork-added contexts to include.
+  - `SETUP_GITHUB_DRY_RUN=1` prints every write instead of sending it, the repo-settings PATCH included.
+  - `SETUP_GITHUB_STUB_*` replace the reads for the test harness.
+  - `-h`/`--help` now prints usage instead of being refused as a repo slug.
+
+  `.github/workflows/migrate.yml` already named "`bin/setup-github.sh`'s read-append-assert path" as the only safe writer; this is that path. `test/setup_github_test.rb` statically refuses to run the script while an unconditional PUT exists, then runs it under a `gh` shim that fails on any call. It pins the exact POST body, a preserved unknown context, the assertion's exit 1 on a short re-read, idempotence, the 404 creation path and a total dry run. Against the previous script it fails the four static checks and skips every behavioural case. Wired as `setup-github-regression`.
+
 - **`fastlane ios upload_screenshots` could not run at all, and had never been able to.** The lane passed `platform: :ios` — a Symbol — to `deliver`. `deliver`'s option declares no `type:`, so `FastlaneCore::ConfigItem` defaults `is_string: true` and refuses at config-parse time: `[!] 'platform' value must be a String! Found Symbol instead.` It died in 1.1 seconds, before any network call, on every invocation.
 
   **The asymmetry is what hid it.** Every other `deliver` call site in the same file already passed a String — `platform.to_s` from both metadata helpers, and the literal `"osx"` in the macOS screenshot lane twenty lines below. The iOS lane held the only Symbol in the file, and its own working twin sat close enough to read at a glance, so checking the neighbours *confirmed* the bug rather than exposing it.
