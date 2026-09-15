@@ -152,6 +152,88 @@ fi
 MAC_ICON="app/macOS/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
 [ -f "$MAC_ICON" ] && check_icon "macOS 1024 icon" "$MAC_ICON" 1024
 
+# macOS: the .icns is the file the built app ACTUALLY reads, and until now
+# nothing here opened it. project.yml sets ASSETCATALOG_COMPILER_APPICON_NAME
+# to empty so macOS resolves CFBundleIconFile, and a postCompileScript copies
+# macOS/Resources/AppIcon.icns over actool's output before Code Sign. So the
+# two checks above inspect SOURCES, and the artefact that ships was outside
+# the population entirely — a gate reporting green on an icon it never saw.
+#
+# actool emits a 4-size .icns (128/256/512/1024) regardless of catalog input.
+# That is the exact shape this compares against: the .icns must carry every
+# pixel size the catalog declares, so a build that silently fell back to
+# actool's output is red rather than green.
+#
+# Derived from BOTH sources and compared, never from a size list written here
+# — a hardcoded list goes stale the day the catalog gains an entry, and would
+# then be asserting about an icon set nobody ships.
+MAC_ICNS="app/macOS/Resources/AppIcon.icns"
+MAC_SET_JSON="app/macOS/Assets.xcassets/AppIcon.appiconset/Contents.json"
+if [ -f "$MAC_ICNS" ] && [ -f "$MAC_SET_JSON" ]; then
+  if ! python3 - "$MAC_ICNS" "$MAC_SET_JSON" <<'PY'
+import json, struct, sys
+
+icns_path, json_path = sys.argv[1], sys.argv[2]
+
+# ICNS member type -> pixel size. ic04/ic05 are the 16 and 32 ARGB members;
+# omitting them is what makes a complete .icns look as if it were missing its
+# two smallest sizes.
+TYPE_PX = {
+    "icp4": 16, "icp5": 32, "icp6": 64,
+    "ic04": 16, "ic05": 32,
+    "ic07": 128, "ic08": 256, "ic09": 512, "ic10": 1024,
+    "ic11": 32, "ic12": 64, "ic13": 256, "ic14": 512,
+    "is32": 16, "il32": 32, "ih32": 48, "it32": 128,
+}
+
+blob = open(icns_path, "rb").read()
+if blob[:4] != b"icns":
+    print("  FAIL %s is not an ICNS container" % icns_path, file=sys.stderr)
+    sys.exit(1)
+
+declared = struct.unpack(">I", blob[4:8])[0]
+off, members = 8, []
+while off + 8 <= min(declared, len(blob)):
+    kind = blob[off:off + 4].decode("ascii", "replace")
+    length = struct.unpack(">I", blob[off + 4:off + 8])[0]
+    if length < 8:
+        break
+    members.append(kind)
+    off += length
+
+icns_px = {TYPE_PX[k] for k in members if k in TYPE_PX}
+
+catalog = json.load(open(json_path, encoding="utf-8"))
+entries = [i for i in catalog.get("images", []) if i.get("filename")]
+def pixels(entry):
+    base = float(entry["size"].split("x")[0])
+    return int(base * int(entry.get("scale", "1x").rstrip("x")))
+catalog_px = {pixels(e) for e in entries}
+
+print("  icns_members=%d icns_sizes=%s" % (len(members), sorted(icns_px)))
+print("  catalog_entries=%d catalog_sizes=%s" % (len(entries), sorted(catalog_px)))
+
+# NON-VACUITY: a parse that found nothing must not read as agreement.
+if not icns_px or not catalog_px:
+    print("  FAIL read no icon sizes from %s -- the check asserted nothing"
+          % ("the .icns" if not icns_px else "the catalog"), file=sys.stderr)
+    sys.exit(1)
+
+missing = sorted(catalog_px - icns_px)
+if missing:
+    print("  FAIL the shipped .icns is missing %s -- the catalog declares "
+          "%s and the .icns carries %s. actool emits a 4-size .icns; this is "
+          "that shape." % (missing, sorted(catalog_px), sorted(icns_px)),
+          file=sys.stderr)
+    sys.exit(1)
+
+print("  ok   shipped .icns covers every size the catalog declares")
+PY
+  then
+    fail=1
+  fi
+fi
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "FAILED: releasing this icon invites a Guideline 2.3.8 rejection." >&2
