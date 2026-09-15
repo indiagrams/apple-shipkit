@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`docs/UI-AUTOMATION.md` names two XCUITest traps that look like the app's fault.** First, a launch argument written as a bare `-Flag` takes the *next* argument as its value, because `UserDefaults` reads launch arguments as `-Key value` pairs, so every later pin shifts. On one run that launch presented no window at all. Second, on macOS `app.descendants(matching: .menuItem)` lists the menu items of the whole menu bar, Apple menu first, not only those of the menu just opened. A "this is not the Apple menu" check built on it failed on a correct selection 5 times out of 5. The section gives the scoped read (`selected.menus.firstMatch.children(matching: .menuItem)`), and says to treat an empty read as a failure and to prove the check can fail with `XCTExpectFailure`.
+
 - **`app/UITestSupport/` — a read layer for UI tests, because the two platforms publish a SwiftUI view's text in different accessibility attributes and XCUITest reads only some of them.** A cross-platform suite can be green on iOS for a year while its macOS twin has never once looked at its subject.
 
   macOS publishes a plain `Text`'s content in `AXValue` **alone**. XCUITest's `.label` is built from `AXDescription` falling back to `AXTitle` and never reads `AXValue`, so on macOS `element.label` is a constant empty string for the three commonest text shapes a SwiftUI author writes — the same answer for an element rendering the right string, the wrong string, or nothing. On iOS the same `Text` publishes its content *as* its label, which is exactly why the iOS half stays green and reports nothing wrong.
