@@ -19,7 +19,13 @@
 #
 # Usage:   bin/dump-failure-screenshots.sh <xcresult-path> [output-dir]
 # Output:  <output-dir>/<TestClass-testName>/<attachment-name>.png
-# Exit:    always 0 — a missing screenshot must not mask the test failure itself.
+# Exit:    0 whenever a bundle was read, including when it holds no failed tests
+#          or no PNGs, so a missing screenshot never masks the test failure itself.
+#          1 on a usage error (no path given) or when no .xcresult exists at the
+#          path. Both are the CALLER's mistake, and `make uitest-screenshots`
+#          should say so. A CI step that runs this after a test step that may
+#          have failed before writing its bundle (a build error, say) should check
+#          `[ -d <xcresult-path> ]` first, or it adds a second, unrelated red.
 #
 # To get screenshots worth dumping, attach one in tearDown:
 #   let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
