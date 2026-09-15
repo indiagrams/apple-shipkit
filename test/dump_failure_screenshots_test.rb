@@ -102,7 +102,7 @@ stubbed(tests_json: failed, export_png: true) do |dir, env|
 end
 
 # The header must name both non-zero cases, so it cannot drift back to "always 0".
-exit_block = File.read(SCRIPT)[/^# Exit:.*?(?=^#\s*$|^# To get)/m].to_s
+exit_block = File.read(SCRIPT, encoding: "UTF-8")[/^# Exit:.*?(?=^#\s*$|^# To get)/m].to_s
 check "header's Exit block does not promise always 0", exit_block.match?(/always 0/i), false
 check "header's Exit block names the usage error", exit_block.match?(/usage error/i), true
 check "header's Exit block names the missing bundle", exit_block.match?(/no \.xcresult exists/i), true
