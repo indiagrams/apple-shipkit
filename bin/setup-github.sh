@@ -411,7 +411,7 @@ JSON
 
   # Capture stderr separately so we can still detect the "Upgrade to GitHub Pro"
   # response here (a repo can answer 404 on the read and 403 on the write).
-  PUT_STDERR=$(mktemp -t gh-protection-stderr)
+  PUT_STDERR=$(mktemp "${TMPDIR:-/tmp}/gh-protection-stderr.XXXXXX")
   trap 'rm -f "$PUT_STDERR"' EXIT
   if ! gh_write PUT "repos/$REPO/branches/main/protection" "$PROTECTION_JSON" \
     -H "Accept: application/vnd.github+json" --silent 2>"$PUT_STDERR"; then
