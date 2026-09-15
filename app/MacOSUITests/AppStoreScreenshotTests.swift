@@ -23,55 +23,21 @@ final class AppStoreScreenshotTests: XCTestCase {
         app = nil
     }
 
-    func testScreenshot_01_Home() throws {
-        // Skip on headless GitHub Actions runners.
+    func testScreenshot_01_Home() {
+        // NO RUNNER-IDENTITY SKIP. This test used to skip whenever HOME was `/Users/runner`, on the
+        // stated cause that `app.activate()` sits ~60 s on a headless runner and then records
+        // "Failed to activate application". Re-measured on a hosted macos-15 runner (2026-09-15)
+        // through `TestRobot`'s dance: activation cost 0.009 s, and the `File > New Window`
+        // fallback ran and produced a window. What that runner does limit is the DISPLAY: 1024x768
+        // points (visible frame 1024x681). This capture forces no window size, so its window fits.
+        // A capture that forces one larger than the screen should skip on screen FIT, comparing
+        // `NSScreen.main?.visibleFrame` with the requested size, never on who the runner is.
         //
-        // `app.activate()` below requires a GUI session to bring the window
-        // to the foreground. On macos-15-arm64 image 20260520+ (macOS 15.7.7+)
-        // the headless runner session refuses to receive focus, so activate()
-        // sits for ~60s, then XCTest records "Failed to activate application
-        // '<App>.app' (current state: Running Background)". With
-        // `continueAfterFailure = false`, the rest of the test (window check,
-        // File → New Window fallback, screenshot capture) never runs.
-        //
-        // Detection: macOS XCUITest spawns the runner via launchd, which
-        // scrubs env vars — `ProcessInfo.processInfo.environment["CI"]` and
-        // `["GITHUB_ACTIONS"]` are NOT visible inside the runner even though
-        // they're set on the workflow. The home directory, however, *is*
-        // inherited from the launchd user session: GH-Actions macos-* runners
-        // always log in as `runner` (HOME = `/Users/runner`), a path that
-        // can't match any developer Mac (HOME there is `/Users/<username>`).
-        //
-        // The screenshot test exists for `make screenshots` (run locally or
-        // via a GUI-capable runner), not for CI smoke validation — the
-        // `app (macOS)` matrix cells in pr.yml already get compile-coverage
-        // of this file, plus runtime coverage of `AppMacOSTests` (the
-        // non-UI unit test) via the same `xcodebuild test` invocation. Skip
-        // here with XCTSkip so xcodebuild exits 0; locally the test runs in
-        // full.
-        if NSHomeDirectory() == "/Users/runner" {
-            throw XCTSkip("Skipped on headless GitHub Actions runner; runs in full locally via `make screenshots`.")
-        }
-
-        app.launchArguments = ["UI_TESTING"]
-        app.launch()
-        // activate() so the window comes to front; without it the window may
-        // launch behind others and XCUITest's window queries return nothing
-        // on a real Mac with other GUI apps running.
-        app.activate()
-
-        // Fall back to File → New Window if the headless runner loses the
-        // initial window.
-        if !app.windows.firstMatch.waitForExistence(timeout: 8) {
-            let fileMenu = app.menuBarItems["File"]
-            if fileMenu.waitForExistence(timeout: 3) {
-                fileMenu.click()
-                let newWindow = app.menuItems["New Window"]
-                if newWindow.waitForExistence(timeout: 3) {
-                    newWindow.click()
-                }
-            }
-        }
+        // `TestRobot.launch` activates only when the app is not already frontmost, then waits for a
+        // window and falls back to `File > New Window`. `register(with:)` attaches `final-state`
+        // at teardown, so a failed capture still leaves a picture in the `.xcresult`.
+        let robot = TestRobot(app: app).register(with: self)
+        robot.launch(args: ["UI_TESTING"])
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5),
                       "App window must be visible")

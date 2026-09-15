@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`app/UITestSupport/TestRobot.swift`: a drive layer for UI tests, so a suite stops hand-rolling the three pieces that make macOS UI tests reliable.** It provides:
+  - a robot base (`TestRobot`, every method returns `Self`);
+  - the macOS window-activation dance (`presentWindow(within:)`: activate only when not frontmost, wait for a window, fall back to `File > New Window`, and return the route taken);
+  - an automatic `final-state` teardown screenshot (`register(with:)`), the attachment `bin/dump-failure-screenshots.sh` recovers.
+
+  The teardown block captures the app strongly and the test case weakly. A first version reached the app through `[weak self]` on a robot held in a local `let`, so it found `nil` at teardown and attached nothing, silently.
+
+  `app/MacOSUITests/AppStoreScreenshotTests.swift` now drives its capture through the robot and **no longer skips whenever `HOME` is `/Users/runner`**. That skip's stated cause, `activate()` sitting about 60 s on a headless runner, did not reproduce on a hosted macos-15 runner (2026-09-15): activation cost 0.009 s and the New Window fallback produced a window. What that runner limits is the display, 1024x768 points, and this capture forces no window size. `docs/UI-AUTOMATION.md` documents the robot, and says to skip a capture that forces a larger window on screen fit rather than on runner identity.
+
 - **`docs/UI-AUTOMATION.md` names two XCUITest traps that look like the app's fault.** First, a launch argument written as a bare `-Flag` takes the *next* argument as its value, because `UserDefaults` reads launch arguments as `-Key value` pairs, so every later pin shifts. On one run that launch presented no window at all. Second, on macOS `app.descendants(matching: .menuItem)` lists the menu items of the whole menu bar, Apple menu first, not only those of the menu just opened. A "this is not the Apple menu" check built on it failed on a correct selection 5 times out of 5. The section gives the scoped read (`selected.menus.firstMatch.children(matching: .menuItem)`), and says to treat an empty read as a failure and to prove the check can fail with `XCTExpectFailure`.
 
 - **`app/UITestSupport/` — a read layer for UI tests, because the two platforms publish a SwiftUI view's text in different accessibility attributes and XCUITest reads only some of them.** A cross-platform suite can be green on iOS for a year while its macOS twin has never once looked at its subject.
