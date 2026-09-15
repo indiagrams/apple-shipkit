@@ -82,9 +82,11 @@ suite can therefore be green on iOS for a year while its macOS twin has never
 once looked at its subject.
 
 macOS publishes a plain `Text`'s content in `AXValue` **alone**. `.label` is
-built from `AXDescription` falling back to `AXTitle`, and never reads `AXValue`.
-So on macOS `element.label` is a constant empty string for the three commonest
-text shapes a SwiftUI author writes — the same answer for an element rendering
+built from `AXDescription`, never reads `AXValue`, and does not fall back to
+`AXTitle` either: a menu item reads `label=""` with its text in `title`
+(measured on a hosted macOS runner). So on macOS `element.label` is a constant
+empty string for the three commonest text shapes a SwiftUI author writes — the
+same answer for an element rendering
 the right string, the wrong string, or nothing at all. On iOS the same `Text`
 publishes its content *as* its label, which is why the iOS half stays green and
 tells you nothing is wrong.
