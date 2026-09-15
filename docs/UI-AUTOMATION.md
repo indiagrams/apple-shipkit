@@ -24,7 +24,7 @@ of a test three weeks later.
 ## Layer 1 — in-process XCUITest
 
 `app/UITests/` and `app/MacOSUITests/` are already wired by both project
-generators. Two helpers here remove the sharp edges that bite everyone.
+generators. The helpers here remove the sharp edges that bite everyone.
 
 ### Run against a real device when one is plugged in
 
@@ -62,6 +62,29 @@ override func tearDown() {
     super.tearDown()
 }
 ```
+
+### Drive the app through a robot: `UITestSupport/TestRobot.swift`
+
+```swift
+let robot = TestRobot(app: XCUIApplication()).register(with: self)
+robot.launch(args: ["UI_TESTING"])
+```
+
+- **One robot per app, every method returns `Self`.** A test body reads as a
+  chain of actions; subclass `TestRobot` for your own screens.
+- **`launch` runs the macOS window-activation dance.** It activates only when
+  the app is not already frontmost, waits for a window, and falls back to
+  `File > New Window`. The route it took (`present`, `new-window`, `none`) is
+  kept in `presentRoute` for a failure message. On a real Mac a window can
+  launch behind other apps, so the activation is load-bearing. On a hosted
+  macos-15 runner it cost 0.009 s, and the fallback ran and produced a window.
+  That runner's real limit is its **display**, 1024x768 points: a test that
+  forces a larger window should skip on screen fit, never on who the runner is.
+- **`register(with:)` attaches a `final-state` screenshot at teardown, pass or
+  fail.** Call it before `launch`. It holds the app strongly and the test case
+  weakly. A block that reached the app through a deallocated robot would find
+  nothing, attach nothing, and say nothing. That attachment is what
+  `dump-failure-screenshots.sh` recovers.
 
 ### Conventions worth stealing
 
