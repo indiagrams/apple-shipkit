@@ -182,8 +182,13 @@ every phone; each phone gets one WDA install and one session.
 
 ```sh
 # one install per phone — the derived-data default is /tmp/wda-<UDID>,
-# already unique per device, which is the rule below satisfying itself
-for udid in $(xcrun xctrace list devices | grep -E "iPhone.*\(" | grep -iv simulator \
+# already unique per device, which is the rule below satisfying itself.
+# Only the "== Devices ==" section: "== Devices Offline ==" lists every iPhone
+# this Mac has ever paired with. Case-insensitive, because "jp's iphone" is an
+# iPhone. Same filter as bin/uitest-destination.sh.
+for udid in $(xcrun xctrace list devices \
+                | awk '/^== Devices ==/{inside=1; next} /^== /{inside=0} inside' \
+                | grep -iE "iphone.*\(" | grep -iv simulator \
                 | sed 's/.*(\(.*\))/\1/'); do
   bin/device-rig/install-wda.sh "$udid"
 done

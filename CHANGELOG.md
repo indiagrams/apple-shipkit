@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`docs/UI-AUTOMATION.md`'s multi-phone loop would install WebDriverAgent on phones that are not plugged in.** It found phones with an unfiltered `xcrun xctrace list devices | grep -E "iPhone.*\("`. That listing also prints `== Devices Offline ==`, every iPhone the Mac has ever paired with, and the case-sensitive match skipped a phone named in lower case. `bin/uitest-destination.sh` already documents both traps and filters for them. The loop now uses the same `awk` section filter and `grep -i`, so pasting it installs only on connected phones, including lower-case-named ones.
+
 - **`fastlane ios upload_screenshots` could not run at all, and had never been able to.** The lane passed `platform: :ios` — a Symbol — to `deliver`. `deliver`'s option declares no `type:`, so `FastlaneCore::ConfigItem` defaults `is_string: true` and refuses at config-parse time: `[!] 'platform' value must be a String! Found Symbol instead.` It died in 1.1 seconds, before any network call, on every invocation.
 
   **The asymmetry is what hid it.** Every other `deliver` call site in the same file already passed a String — `platform.to_s` from both metadata helpers, and the literal `"osx"` in the macOS screenshot lane twenty lines below. The iOS lane held the only Symbol in the file, and its own working twin sat close enough to read at a glance, so checking the neighbours *confirmed* the bug rather than exposing it.
