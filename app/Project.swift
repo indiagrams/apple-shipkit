@@ -181,7 +181,7 @@ let iosUITestTarget = Target.target(
     bundleId: "$(BUNDLE_ID).uitests",
     deploymentTargets: .iOS("17.0"),
     infoPlist: .default,
-    sources: ["UITests/**", "Shared/AccessibilityIdentifiers.swift"],
+    sources: ["UITests/**", "UITestSupport/**", "Shared/AccessibilityIdentifiers.swift"],
     dependencies: [.target(name: "App-iOS")],
     settings: .settings(base: [
         "TEST_TARGET_NAME": "App-iOS",
@@ -200,7 +200,7 @@ let macUITestTarget = Target.target(
     bundleId: "$(BUNDLE_ID).macuitests",
     deploymentTargets: .macOS("14.0"),
     infoPlist: .default,
-    sources: ["MacOSUITests/**", "Shared/AccessibilityIdentifiers.swift"],
+    sources: ["MacOSUITests/**", "UITestSupport/**", "Shared/AccessibilityIdentifiers.swift"],
     dependencies: [.target(name: "App-macOS")],
     settings: .settings(base: [
         "TEST_TARGET_NAME": "App-macOS",
