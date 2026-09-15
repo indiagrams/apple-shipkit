@@ -12,7 +12,9 @@
 #
 # Env:
 #   FORCE_SIMULATOR=1   skip the device and name a simulator (CI, or screenshots)
-#   SIMULATOR_NAME      simulator to fall back to (default: iPhone 16)
+#   SIMULATOR_NAME      simulator to fall back to (default: the last available
+#                       iPhone simctl lists; the literal "iPhone 16" only when
+#                       that list is empty)
 set -euo pipefail
 
 # Default simulator: an iPhone this machine actually has. A hardcoded name rots
@@ -25,10 +27,17 @@ set -euo pipefail
 # "iPhone 16e". Any available iPhone is a valid destination, so the arbitrary
 # pick is fine — claiming it is the newest was not. Set SIMULATOR_NAME when you
 # care which one.
+#
+# The NAME is everything before the device's own parenthesised UDID, not
+# everything before the first parenthesis: a model that carries its generation
+# in parentheses, "iPhone SE (3rd generation)", was captured as "iPhone SE",
+# which no simulator is called, and xcodebuild failed before a single test ran.
+# On a hosted macos-15 runner that model is the LAST iPhone simctl lists, so the
+# default was the broken name on every run.
 SIM_NAME="${SIMULATOR_NAME:-}"
 if [[ -z "$SIM_NAME" ]]; then
   SIM_NAME=$(xcrun simctl list devices available 2>/dev/null \
-               | sed -nE 's/^[[:space:]]*(iPhone[^(]*)\(.*/\1/p' \
+               | sed -nE 's/^[[:space:]]*(iPhone.*[^[:space:]])[[:space:]]+\([0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\).*/\1/p' \
                | sed 's/[[:space:]]*$//' | tail -1) || true
 fi
 [[ -n "$SIM_NAME" ]] || SIM_NAME="iPhone 16"
