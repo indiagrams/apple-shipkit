@@ -103,6 +103,8 @@ on:
       - 'test/uitest_destination_test.rb'
       - 'bin/dump-failure-screenshots.sh'
       - 'test/dump_failure_screenshots_test.rb'
+      - 'bin/setup-github.sh'
+      - 'test/setup_github_test.rb'
       - 'bin/refork-smoketest.sh'
       - 'ci/test-refork-inputs.sh'
       - 'ci/test-dry-run.sh'
@@ -582,6 +584,23 @@ jobs:
           bundler-cache: false  # stdlib-only; xcrun is stubbed on PATH
       - name: Run dump failure screenshots test
         run: ruby test/dump_failure_screenshots_test.rb
+
+  # bin/setup-github.sh's read-append-assert branch-protection write. The old script
+  # PUT the whole /protection object from its own check list, silently deleting every
+  # required context it did not author. This runs the script under dry run with stubbed
+  # reads and a gh shim that fails on any call, and pins the POST body, preservation of an
+  # unknown context, the post-write assertion's exit 1, idempotence and the 404 creation path.
+  setup-github-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false  # stdlib-only; gh is shimmed on PATH, jq is on the image
+      - name: Run setup-github tests
+        run: ruby test/setup_github_test.rb
 
   # RELEASE_TAG_PREFIX moves the app's release tags out of the namespace SwiftPM
   # resolves, for repos that are both an app and a package. The property this
