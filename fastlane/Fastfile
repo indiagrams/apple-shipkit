@@ -2056,7 +2056,7 @@ platform :ios do
     deliver(
       api_key:                  asc_api_key,
       app_identifier:           APP_IDENTIFIER,
-      platform:                 :ios,
+      platform:                 "ios",
       skip_metadata:            true,
       skip_binary_upload:       true,
       skip_screenshots:         false,
