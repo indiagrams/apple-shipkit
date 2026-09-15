@@ -82,9 +82,11 @@ suite can therefore be green on iOS for a year while its macOS twin has never
 once looked at its subject.
 
 macOS publishes a plain `Text`'s content in `AXValue` **alone**. `.label` is
-built from `AXDescription` falling back to `AXTitle`, and never reads `AXValue`.
-So on macOS `element.label` is a constant empty string for the three commonest
-text shapes a SwiftUI author writes — the same answer for an element rendering
+built from `AXDescription`, never reads `AXValue`, and does not fall back to
+`AXTitle` either: a menu item reads `label=""` with its text in `title`
+(measured on a hosted macOS runner). So on macOS `element.label` is a constant
+empty string for the three commonest text shapes a SwiftUI author writes — the
+same answer for an element rendering
 the right string, the wrong string, or nothing at all. On iOS the same `Text`
 publishes its content *as* its label, which is why the iOS half stays green and
 tells you nothing is wrong.
@@ -208,8 +210,13 @@ every phone; each phone gets one WDA install and one session.
 
 ```sh
 # one install per phone — the derived-data default is /tmp/wda-<UDID>,
-# already unique per device, which is the rule below satisfying itself
-for udid in $(xcrun xctrace list devices | grep -E "iPhone.*\(" | grep -iv simulator \
+# already unique per device, which is the rule below satisfying itself.
+# Only the "== Devices ==" section: "== Devices Offline ==" lists every iPhone
+# this Mac has ever paired with. Case-insensitive, because "jp's iphone" is an
+# iPhone. Same filter as bin/uitest-destination.sh.
+for udid in $(xcrun xctrace list devices \
+                | awk '/^== Devices ==/{inside=1; next} /^== /{inside=0} inside' \
+                | grep -iE "iphone.*\(" | grep -iv simulator \
                 | sed 's/.*(\(.*\))/\1/'); do
   bin/device-rig/install-wda.sh "$udid"
 done

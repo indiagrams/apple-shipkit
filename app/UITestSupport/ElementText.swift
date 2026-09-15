@@ -35,7 +35,10 @@ import XCTest
 // `BlindReadGuards.swift` exist to name, and they did name it, on this shape's first execution.
 //
 // macOS publishes a plain SwiftUI `Text`'s content in **AXValue alone**. XCUITest's `.label` is
-// built from AXDescription, falling back to AXTitle, and never reads AXValue. So on macOS
+// built from AXDescription and never reads AXValue. It does NOT fall back to AXTitle either:
+// measured on a hosted macOS CI runner (2026-09-15), every item of an app's own menu read
+// `label=""` while `title` carried its text. That is the seventh shape above, and it is why
+// `title` is asked for separately below. So on macOS
 // `element.label` is a CONSTANT EMPTY STRING for the three commonest text shapes a SwiftUI author
 // writes — for an element rendering the wrong string and for one rendering the right string alike.
 // On iOS the same `Text` publishes its content AS its label, which is why a suite can be green on
